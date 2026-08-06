@@ -28,6 +28,7 @@ dev = [
     "ruff>=0.6",
     "black>=24.0",
     "mypy>=1.11",
+    "types-PyYAML",
     "pre-commit>=3.8"
 ]
 

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from openeval.application.ports import RunRepository
 from openeval.domain.runs import Run
 from openeval.domain.shared import generate_id
 
 
 @dataclass
 class CreateRunUseCase:
-    run_repository: object
+    run_repository: RunRepository
 
     def execute(self, evaluation_definition_id: str) -> Run:
         run = Run(
@@ -18,5 +19,4 @@ class CreateRunUseCase:
         )
 
         self.run_repository.save(run)
-
         return run

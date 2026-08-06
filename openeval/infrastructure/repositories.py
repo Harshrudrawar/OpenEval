@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from openeval.application.ports import EvaluationRepository
+from openeval.application.ports import EvaluationRepository, RunRepository
 from openeval.domain.evaluation import EvaluationDefinition
 from openeval.domain.runs import Run
 
@@ -16,7 +16,7 @@ class InMemoryEvaluationRepository(EvaluationRepository):
         return self._store.get(evaluation_id)
 
 
-class InMemoryRunRepository:
+class InMemoryRunRepository(RunRepository):
     def __init__(self) -> None:
         self._store: dict[str, Run] = {}
 
