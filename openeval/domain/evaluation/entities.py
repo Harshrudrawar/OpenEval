@@ -28,13 +28,21 @@ class EvaluationDefinition(Entity):
             raise ValidationError("EvaluationDefinition.name cannot be empty")
 
         if not self.dataset_version_id.strip():
-            raise ValidationError("EvaluationDefinition.dataset_version_id cannot be empty")
+            raise ValidationError(
+                "EvaluationDefinition.dataset_version_id cannot be empty"
+            )
 
         if not self.prompt_version_id.strip():
-            raise ValidationError("EvaluationDefinition.prompt_version_id cannot be empty")
+            raise ValidationError(
+                "EvaluationDefinition.prompt_version_id cannot be empty"
+            )
 
         if not isinstance(self.target, dict) or not self.target:
-            raise ValidationError("EvaluationDefinition.target must be a non-empty dict")
+            raise ValidationError(
+                "EvaluationDefinition.target must be a non-empty dict"
+            )
 
         if not self.metric_plugins:
-            raise ValidationError("EvaluationDefinition.metric_plugins must contain at least one metric")
+            raise ValidationError(
+                "EvaluationDefinition.metric_plugins must contain at least one metric"
+            )
