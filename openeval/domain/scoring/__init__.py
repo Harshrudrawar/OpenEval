@@ -1,3 +1,3 @@
-from .entities import Score, Gate, Baseline
+from .entities import Baseline, Gate, Score
 
 __all__ = ["Score", "Gate", "Baseline"]
