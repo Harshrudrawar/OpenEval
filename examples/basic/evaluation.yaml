@@ -1,0 +1,14 @@
+name: Demo Evaluation
+
+dataset:
+  version: dataset-v1
+
+prompt:
+  version: prompt-v1
+
+target:
+  provider: openai
+  model: gpt-4o
+
+metrics:
+  - accuracy

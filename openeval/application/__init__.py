@@ -5,6 +5,7 @@ from .ports import (
     RunRepository,
 )
 from .use_cases import CreateEvaluationDefinitionUseCase
+from .run_use_cases import CreateRunUseCase
 
 __all__ = [
     "EvaluationRepository",
@@ -12,4 +13,5 @@ __all__ = [
     "PromptRepository",
     "RunRepository",
     "CreateEvaluationDefinitionUseCase",
+    "CreateRunUseCase",
 ]

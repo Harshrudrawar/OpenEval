@@ -1,3 +1,9 @@
-from .repositories import InMemoryEvaluationRepository
+from .repositories import (
+    InMemoryEvaluationRepository,
+    InMemoryRunRepository,
+)
 
-__all__ = ["InMemoryEvaluationRepository"]
+__all__ = [
+    "InMemoryEvaluationRepository",
+    "InMemoryRunRepository",
+]
