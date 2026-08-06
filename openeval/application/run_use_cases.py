@@ -17,6 +17,5 @@ class CreateRunUseCase:
             evaluation_definition_id=evaluation_definition_id,
             status="created",
         )
-
         self.run_repository.save(run)
         return run
