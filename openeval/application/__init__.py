@@ -1,3 +1,4 @@
+from .comparison_use_cases import CompareScoresUseCase, ComparisonResult
 from .dataset_use_cases import LoadCasesFromDatasetUseCase
 from .execution_use_cases import ExecuteCasesUseCase
 from .metrics_use_cases import EvaluateCaseResultsUseCase
@@ -24,4 +25,6 @@ __all__ = [
     "LoadCasesFromDatasetUseCase",
     "ExecuteCasesUseCase",
     "EvaluateCaseResultsUseCase",
+    "CompareScoresUseCase",
+    "ComparisonResult",
 ]

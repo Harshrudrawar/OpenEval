@@ -9,6 +9,7 @@ from openeval.application import (
     EvaluateCaseResultsUseCase,
     ExecuteCasesUseCase,
     LoadCasesFromDatasetUseCase,
+    TargetExecutor,
 )
 from openeval.infrastructure import (
     AccuracyMetricPlugin,
@@ -16,6 +17,8 @@ from openeval.infrastructure import (
     InMemoryEvaluationRepository,
     InMemoryRunRepository,
     MockTargetExecutor,
+    OllamaTargetExecutor,
+    OpenAITargetExecutor,
 )
 from openeval.interface.yaml_loader import load_yaml
 
@@ -64,6 +67,24 @@ def print_evaluation_summary(evaluation: Any) -> None:
     print(f"Dataset Version: {evaluation.dataset_version_id}")
     print(f"Prompt Version: {evaluation.prompt_version_id}")
     print(f"Metrics: {len(evaluation.metric_plugins)}")
+
+
+def build_target_executor(target: dict[str, Any]) -> TargetExecutor:
+    provider = str(target.get("provider", "mock")).strip().lower()
+
+    if provider == "openai":
+        model = str(target.get("model", "gpt-4o")).strip() or "gpt-4o"
+        return OpenAITargetExecutor(model=model)
+
+    if provider == "ollama":
+        model = str(target.get("model", "llama3")).strip() or "llama3"
+        base_url = (
+            str(target.get("base_url", "http://localhost:11434/api")).strip()
+            or "http://localhost:11434/api"
+        )
+        return OllamaTargetExecutor(model=model, base_url=base_url)
+
+    return MockTargetExecutor()
 
 
 def run_from_yaml(config_path: str) -> int:
@@ -121,7 +142,7 @@ def run_from_yaml(config_path: str) -> int:
     run_use_case = CreateRunUseCase(run_repository)
     run = run_use_case.execute(evaluation.id)
 
-    target_executor = MockTargetExecutor()
+    target_executor = build_target_executor(target)
     execute_cases_use_case = ExecuteCasesUseCase(target_executor)
     case_results = execute_cases_use_case.execute(cases, run.id)
 

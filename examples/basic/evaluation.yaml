@@ -8,8 +8,8 @@ prompt:
   version: prompt-v1
 
 target:
-  provider: openai
-  model: gpt-4o
+  provider: ollama
+  model: llama3
 
 metrics:
   - accuracy
