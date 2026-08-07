@@ -248,6 +248,218 @@ def build_run_report_html(
 """
 
 
+def build_comparison_report_html(
+    *,
+    evaluation_name: str,
+    evaluation_id: str,
+    dataset_version: str,
+    prompt_version: str,
+    left_name: str,
+    right_name: str,
+    left_accuracy: float,
+    right_accuracy: float,
+    winner: str,
+    margin: float,
+) -> str:
+    generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenEval Comparison Report</title>
+  <style>
+    :root {{
+      --bg: #f6f8fc;
+      --card: #ffffff;
+      --text: #172033;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --success: #16a34a;
+      --accent: #2563eb;
+    }}
+
+    * {{
+      box-sizing: border-box;
+    }}
+
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }}
+
+    .container {{
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }}
+
+    .hero {{
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+      color: white;
+      border-radius: 24px;
+      padding: 28px;
+      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+      margin-bottom: 20px;
+    }}
+
+    .hero h1 {{
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.1;
+    }}
+
+    .hero p {{
+      margin: 0;
+      color: rgba(255, 255, 255, 0.88);
+      font-size: 15px;
+    }}
+
+    .subtle {{
+      margin-top: 10px;
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 13px;
+    }}
+
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin: 20px 0;
+    }}
+
+    .card {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
+    }}
+
+    .label {{
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }}
+
+    .value {{
+      font-size: 22px;
+      font-weight: 700;
+    }}
+
+    .winner {{
+      color: var(--success);
+    }}
+
+    .footer {{
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }}
+
+    .meta {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }}
+
+    .meta-item {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+    }}
+
+    .meta-key {{
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }}
+
+    .meta-value {{
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }}
+
+    .badge {{
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.12);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      margin-bottom: 14px;
+    }}
+  </style>
+</head>
+<body>
+  <main class="container">
+    <section class="hero">
+      <div class="badge">OpenEval Comparison Report</div>
+      <h1>{escape(evaluation_name)}</h1>
+      <p>Evaluation ID: {escape(evaluation_id)}</p>
+      <div class="subtle">Generated at {escape(generated_at)}</div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <span class="label">Left Provider</span>
+        <div class="value">{escape(left_name)}</div>
+      </div>
+      <div class="card">
+        <span class="label">Right Provider</span>
+        <div class="value">{escape(right_name)}</div>
+      </div>
+      <div class="card">
+        <span class="label">Winner</span>
+        <div class="value winner">{escape(winner)}</div>
+      </div>
+      <div class="card">
+        <span class="label">Margin</span>
+        <div class="value">{margin:.2f}</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <span class="label">Left Accuracy</span>
+        <div class="value">{left_accuracy:.2f}</div>
+      </div>
+      <div class="card">
+        <span class="label">Right Accuracy</span>
+        <div class="value">{right_accuracy:.2f}</div>
+      </div>
+      <div class="card">
+        <span class="label">Dataset Version</span>
+        <div class="value">{escape(dataset_version)}</div>
+      </div>
+      <div class="card">
+        <span class="label">Prompt Version</span>
+        <div class="value">{escape(prompt_version)}</div>
+      </div>
+    </section>
+
+    <div class="footer">
+      Built with OpenEval
+    </div>
+  </main>
+</body>
+</html>
+"""
+
+
 def write_run_report(
     output_dir: str | Path,
     *,
@@ -284,6 +496,43 @@ def write_run_report(
             latency_ms=latency_ms,
             gate_threshold=gate_threshold,
             gate_passed=gate_passed,
+        ),
+        encoding="utf-8",
+    )
+
+    return report_path
+
+
+def write_comparison_report(
+    output_dir: str | Path,
+    *,
+    evaluation_name: str,
+    evaluation_id: str,
+    dataset_version: str,
+    prompt_version: str,
+    left_name: str,
+    right_name: str,
+    left_accuracy: float,
+    right_accuracy: float,
+    winner: str,
+    margin: float,
+) -> Path:
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    report_path = out_dir / f"comparison-{evaluation_id}.html"
+    report_path.write_text(
+        build_comparison_report_html(
+            evaluation_name=evaluation_name,
+            evaluation_id=evaluation_id,
+            dataset_version=dataset_version,
+            prompt_version=prompt_version,
+            left_name=left_name,
+            right_name=right_name,
+            left_accuracy=left_accuracy,
+            right_accuracy=right_accuracy,
+            winner=winner,
+            margin=margin,
         ),
         encoding="utf-8",
     )

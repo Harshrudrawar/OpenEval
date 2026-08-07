@@ -7,16 +7,20 @@ from dataclasses import dataclass
 class ComparisonResult:
     left_name: str
     right_name: str
-    left_score: float
-    right_score: float
+    left_accuracy: float
+    right_accuracy: float
 
     @property
     def winner(self) -> str:
-        if self.left_score > self.right_score:
+        if self.left_accuracy > self.right_accuracy:
             return self.left_name
-        if self.right_score > self.left_score:
+        if self.right_accuracy > self.left_accuracy:
             return self.right_name
         return "tie"
+
+    @property
+    def margin(self) -> float:
+        return abs(self.left_accuracy - self.right_accuracy)
 
 
 @dataclass
@@ -26,15 +30,12 @@ class CompareScoresUseCase:
         *,
         left_name: str,
         right_name: str,
-        left_scores: list[float],
-        right_scores: list[float],
+        left_accuracy: float,
+        right_accuracy: float,
     ) -> ComparisonResult:
-        left_avg = sum(left_scores) / len(left_scores) if left_scores else 0.0
-        right_avg = sum(right_scores) / len(right_scores) if right_scores else 0.0
-
         return ComparisonResult(
             left_name=left_name,
             right_name=right_name,
-            left_score=left_avg,
-            right_score=right_avg,
+            left_accuracy=left_accuracy,
+            right_accuracy=right_accuracy,
         )
