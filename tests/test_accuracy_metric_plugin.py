@@ -23,3 +23,14 @@ def test_accuracy_metric_plugin_returns_zero_for_mismatch() -> None:
     )
 
     assert score == 0.0
+
+
+def test_accuracy_metric_plugin_returns_one_for_contained_short_answer() -> None:
+    plugin = AccuracyMetricPlugin()
+
+    score = plugin.evaluate(
+        expected_output={"expected_output": "Paris"},
+        actual_output={"output": {"response": "The capital of France is Paris."}},
+    )
+
+    assert score == 1.0
