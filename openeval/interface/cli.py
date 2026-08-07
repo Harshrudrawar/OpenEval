@@ -81,6 +81,7 @@ def run_from_yaml(config_path: str) -> int:
     prompt_config = config.get("prompt", {})
     target = config.get("target", {})
     metrics = config.get("metrics", [])
+    gate_config = config.get("gate", {})
 
     if not isinstance(dataset_config, dict):
         raise ValueError("dataset must be a YAML mapping/object")
@@ -93,6 +94,12 @@ def run_from_yaml(config_path: str) -> int:
 
     if not isinstance(metrics, list):
         raise ValueError("metrics must be a YAML list")
+
+    if gate_config is None:
+        gate_config = {}
+
+    if not isinstance(gate_config, dict):
+        raise ValueError("gate must be a YAML mapping/object")
 
     dataset_path = dataset_config.get("path", "")
     if not isinstance(dataset_path, str) or not dataset_path.strip():
@@ -115,6 +122,7 @@ def run_from_yaml(config_path: str) -> int:
         prompt_version_id=prompt_version_id,
         target=target,
         metric_plugins=metric_plugins,
+        gate=gate_config or None,
     )
 
     dataset_loader = CsvDatasetLoader()
@@ -148,6 +156,18 @@ def run_from_yaml(config_path: str) -> int:
     accuracy = sum(score.value for score in scores) / len(scores) if scores else 0.0
     latency_ms = (time.perf_counter() - started_at) * 1000
 
+    gate_threshold_raw = gate_config.get("accuracy")
+    gate_threshold: float | None = None
+    gate_passed: bool | None = None
+
+    if gate_threshold_raw is not None:
+        try:
+            gate_threshold = float(gate_threshold_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("gate.accuracy must be a number") from exc
+
+        gate_passed = accuracy >= gate_threshold
+
     provider = str(target.get("provider", "mock")).strip() or "mock"
     model = str(target.get("model", "unknown")).strip() or "unknown"
 
@@ -164,6 +184,8 @@ def run_from_yaml(config_path: str) -> int:
         case_results_count=len(case_results),
         accuracy=accuracy,
         latency_ms=latency_ms,
+        gate_threshold=gate_threshold,
+        gate_passed=gate_passed,
     )
 
     print_evaluation_summary(evaluation)
@@ -173,6 +195,12 @@ def run_from_yaml(config_path: str) -> int:
     print(f"Created {len(case_results)} case results")
     print(f"Accuracy: {accuracy:.2f}")
     print(f"Latency: {latency_ms:.0f} ms")
+
+    if gate_threshold is None:
+        print("Quality Gate: Not configured")
+    else:
+        gate_status = "PASSED" if gate_passed else "FAILED"
+        print(f"Quality Gate: {gate_status} (threshold: {gate_threshold:.2f})")
 
     print()
     print("Run created successfully")

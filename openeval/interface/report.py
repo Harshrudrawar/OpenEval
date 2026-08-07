@@ -18,8 +18,21 @@ def build_run_report_html(
     case_results_count: int,
     accuracy: float,
     latency_ms: float,
+    gate_threshold: float | None,
+    gate_passed: bool | None,
 ) -> str:
     generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+    if gate_threshold is None:
+        gate_display = "Not configured"
+        gate_color = "var(--muted)"
+    else:
+        if gate_passed:
+            gate_display = f"Passed ({gate_threshold:.2f})"
+            gate_color = "var(--success)"
+        else:
+            gate_display = f"Failed ({gate_threshold:.2f})"
+            gate_color = "var(--danger)"
 
     return f"""<!doctype html>
 <html lang="en">
@@ -37,6 +50,7 @@ def build_run_report_html(
       --accent: #2563eb;
       --accent-soft: #eff6ff;
       --success: #16a34a;
+      --danger: #dc2626;
     }}
 
     * {{
@@ -193,6 +207,10 @@ def build_run_report_html(
         <span class="label">Case Results</span>
         <div class="value">{case_results_count}</div>
       </div>
+      <div class="card">
+        <span class="label">Quality Gate</span>
+        <div class="value" style="color: {gate_color};">{escape(gate_display)}</div>
+      </div>
     </section>
 
     <section class="section">
@@ -244,6 +262,8 @@ def write_run_report(
     case_results_count: int,
     accuracy: float,
     latency_ms: float,
+    gate_threshold: float | None,
+    gate_passed: bool | None,
 ) -> Path:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -262,6 +282,8 @@ def write_run_report(
             case_results_count=case_results_count,
             accuracy=accuracy,
             latency_ms=latency_ms,
+            gate_threshold=gate_threshold,
+            gate_passed=gate_passed,
         ),
         encoding="utf-8",
     )
