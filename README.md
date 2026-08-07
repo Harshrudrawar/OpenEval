@@ -2,124 +2,61 @@
 
 # 🚀 OpenEval
 
-### CI/CD and Production Quality Platform for LLM Applications
+### Open-Source AI Evaluation Platform for LLM Applications
 
-*Building reproducible, versioned, and continuously evaluated AI systems.*
+**Run evaluations. Compare models. Enforce AI Quality.**
 
-![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![License](https://img.shields.io/badge/License-Apache%202.0-green?style=for-the-badge)
-![Status](https://img.shields.io/badge/Status-Active%20Development-orange?style=for-the-badge)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white)]()
+[![License](https://img.shields.io/badge/License-Apache%202.0-green?style=for-the-badge)]()
+[![CI](https://github.com/Harshrudrawar/OpenEval/actions/workflows/ci.yml/badge.svg)](https://github.com/Harshrudrawar/OpenEval/actions/workflows/ci.yml)
+[![Status](https://img.shields.io/badge/Status-Active%20Development-orange?style=for-the-badge)]()
 
 </div>
 
 ---
 
-# 📖 Overview
+# Why OpenEval?
 
-OpenEval is an open-source evaluation platform for **Large Language Model (LLM) applications**.
-
-The goal of OpenEval is to make AI quality:
-
-- **Reproducible**
-- **Versioned**
-- **Comparable**
-- **Continuously Evaluated**
-
-Rather than treating evaluation as a one-time experiment, OpenEval integrates evaluation into the software development lifecycle, making it possible to evaluate AI systems consistently during development, CI/CD, and production.
-
----
-
-# ❓ Why OpenEval?
-
-Traditional software has:
+Modern software has:
 
 - Unit Tests
 - Integration Tests
 - CI/CD Pipelines
 
-Modern AI systems also need continuous quality checks.
+Modern AI applications deserve the same engineering discipline.
 
-OpenEval aims to provide a framework where AI evaluation becomes as natural as software testing.
+OpenEval is an open-source platform that brings **continuous evaluation** to LLM applications.
 
 Instead of asking:
 
-> "Did the model perform well?"
+> "Did my model perform well?"
 
 OpenEval helps answer:
 
-> "Can we continuously measure and enforce AI quality?"
+> **"Can I continuously measure, compare, and enforce AI quality?"**
 
 ---
 
-# ✨ Current Features
+# Current Capabilities
 
-- ✅ YAML-driven evaluation configuration
-- ✅ Command-line interface (CLI)
+Today OpenEval can:
+
+- ✅ YAML-driven evaluations
+- ✅ CSV dataset loading
+- ✅ Case generation
+- ✅ Evaluation pipeline
+- ✅ Run creation
+- ✅ Mock execution
+- ✅ Ollama execution
+- ✅ OpenAI provider architecture
+- ✅ Accuracy metric
+- ✅ Plugin architecture
 - ✅ Clean Architecture
-- ✅ Domain-Driven Design (DDD)
-- ✅ Evaluation Definition workflow
-- ✅ Run creation workflow
 - ✅ GitHub Actions CI
-- ✅ Extensible project structure
 
 ---
 
-# 🏗 Architecture
-
-OpenEval follows **Clean Architecture**, keeping business logic independent of frameworks and infrastructure.
-
-```text
-             Interface
-        (CLI / REST / GitHub)
-
-                 │
-                 ▼
-
-            Application
-            (Use Cases)
-
-                 │
-                 ▼
-
-              Domain
-      (Business Rules & Models)
-
-                 │
-                 ▼
-
-          Infrastructure
-(Database • Providers • Plugins)
-```
-
-Dependencies always point inward.
-
----
-
-# 📂 Project Structure
-
-```text
-OpenEval/
-│
-├── .github/
-├── docs/
-├── examples/
-├── tests/
-│
-├── openeval/
-│   ├── application/
-│   ├── domain/
-│   ├── infrastructure/
-│   └── interface/
-│
-├── pyproject.toml
-└── README.md
-```
-
----
-
-# ⚙️ Current Workflow
-
-The current workflow is:
+# Current Workflow
 
 ```text
 evaluation.yaml
@@ -128,20 +65,35 @@ evaluation.yaml
  Load Configuration
         │
         ▼
-Create Evaluation Definition
+ Load Dataset
         │
         ▼
-      Create Run
+ Generate Cases
         │
         ▼
-   Display Summary
+ Create Evaluation
+        │
+        ▼
+ Create Run
+        │
+        ▼
+ Execute Target
+        │
+        ▼
+ Generate Case Results
+        │
+        ▼
+ Run Metrics
+        │
+        ▼
+ Display Results
 ```
 
 ---
 
-# 🚀 Quick Start
+# Quick Start
 
-## Clone the repository
+## Clone
 
 ```bash
 git clone https://github.com/Harshrudrawar/OpenEval.git
@@ -154,128 +106,209 @@ cd OpenEval
 pip install -e .
 ```
 
-## Run the example
+## Run
 
 ```bash
 python -m openeval.interface.cli run examples/basic/evaluation.yaml
 ```
 
-Example output:
+Example Output
 
 ```text
 ✔ Evaluation created successfully
 
-ID: 83be7e45-e527-4f57-802b-53d17b037ad4
+ID: d6bbcd41-9185-48a6-8253-7c275e34cb18
+
 Name: Demo Evaluation
+
 Dataset Version: dataset-v1
+
 Prompt Version: prompt-v1
+
 Metrics: 1
+
+Loaded 3 cases
+
+Created 3 case results
+
+Accuracy: 1.00
 
 Run created successfully
 
-Run ID: d8c5f61c-338a-4d07-b204-35d31c7e1088
+Run ID: dfbe268c-9fa0-4dee-bb0a-55e6a8e98d9b
+
 Run Status: created
 ```
 
 ---
 
-# 📄 Example Configuration
+# Example Configuration
 
 ```yaml
 name: Demo Evaluation
 
 dataset:
   version: dataset-v1
+  path: examples/basic/dataset.csv
 
 prompt:
   version: prompt-v1
 
 target:
-  provider: openai
-  model: gpt-4o
+  provider: mock
 
 metrics:
   - accuracy
 ```
 
+To use Ollama:
+
+```yaml
+target:
+  provider: ollama
+  model: llama3
+```
+
+To use OpenAI (coming soon):
+
+```yaml
+target:
+  provider: openai
+  model: gpt-4o
+```
+
 ---
 
-# 🛣 Roadmap
+# Project Structure
 
-## Phase 1 — Foundation ✅
+```text
+OpenEval/
 
-- [x] Clean Architecture
-- [x] Domain Layer
-- [x] Application Layer
-- [x] Infrastructure Layer
-- [x] YAML Configuration
-- [x] CLI
-- [x] Evaluation Creation
-- [x] Run Creation
+├── docs/
+├── examples/
+├── tests/
+
+├── openeval/
+│
+├── application/
+├── domain/
+├── infrastructure/
+└── interface/
+
+├── pyproject.toml
+└── README.md
+```
+
+---
+
+# Architecture
+
+OpenEval follows **Clean Architecture**.
+
+```text
+              Interface
+          (CLI / API / GitHub)
+
+                  │
+                  ▼
+
+             Application
+             (Use Cases)
+
+                  │
+                  ▼
+
+               Domain
+       (Business Rules)
+
+                  │
+                  ▼
+
+           Infrastructure
+ (Providers • Storage • Plugins)
+```
+
+Dependencies always point inward.
+
+---
+
+# Design Principles
+
+OpenEval is built around a few core ideas.
+
+- Version everything
+- Reproduce everything
+- Evaluate continuously
+- Keep business logic framework-independent
+- Build extensible plugin systems
+- Prefer vertical slices over horizontal layers
+- Keep the CI pipeline green
+
+---
+
+# Roadmap
+
+## Completed
+
+- [x] YAML configuration
+- [x] Dataset loading
+- [x] Case generation
+- [x] Evaluation pipeline
+- [x] Run creation
+- [x] Mock provider
+- [x] Ollama provider
+- [x] OpenAI provider architecture
+- [x] Accuracy metric
+- [x] Plugin architecture
 - [x] GitHub Actions
+- [x] Ruff
+- [x] Black
+- [x] MyPy
+- [x] Pytest
 
 ---
 
-## Phase 2 — Evaluation Engine 🚧
+## Next
 
-- [ ] Dataset Loading
-- [ ] Prompt Loading
-- [ ] Case Generation
-- [ ] Evaluation Execution
-- [ ] Run Lifecycle
-
----
-
-## Phase 3 — Metrics
-
-- [ ] Accuracy
-- [ ] BLEU
-- [ ] ROUGE
-- [ ] LLM-as-a-Judge
-- [ ] Custom Metric Plugins
-
----
-
-## Phase 4 — Reports
-
-- [ ] HTML Reports
-- [ ] Run History
-- [ ] Baseline Comparison
-- [ ] Trend Analysis
-
----
-
-## Phase 5 — Production
-
-- [ ] PostgreSQL Support
-- [ ] REST API
+- [ ] Real OpenAI execution
+- [ ] Model comparison
+- [ ] HTML reports
+- [ ] Cost tracking
+- [ ] Latency tracking
 - [ ] GitHub Action
-- [ ] Docker Support
-- [ ] Plugin Marketplace
 
 ---
 
-# 🎯 Design Principles
+## Future
 
-OpenEval is built around a few core principles:
-
-- Version everything.
-- Reproduce everything.
-- Keep business logic framework-independent.
-- Prefer explicit domain models.
-- Design for extensibility.
-- Build features as vertical slices.
+- [ ] Claude support
+- [ ] Gemini support
+- [ ] Azure OpenAI
+- [ ] LLM-as-a-Judge
+- [ ] Experiment tracking
+- [ ] Quality Gates
+- [ ] Benchmarking Dashboard
 
 ---
 
-# 🤝 Contributing
+# Long-Term Vision
+
+OpenEval aims to become:
+
+> **GitHub Actions for AI Quality.**
+
+The goal is to make AI quality measurable, reproducible, and enforceable across development, CI/CD, and production.
+
+---
+
+# Contributing
 
 Contributions are welcome.
 
 Whether you're interested in:
 
-- AI Evaluation
 - AI Infrastructure
+- AI Evaluation
 - Backend Engineering
 - Clean Architecture
 - Developer Tooling
@@ -284,16 +317,16 @@ feel free to open an issue or submit a pull request.
 
 ---
 
-# 📜 License
+# License
 
-Licensed under the Apache 2.0 License.
+Apache 2.0
 
 ---
 
 <div align="center">
 
-**Building reliable AI systems starts with measurable quality.**
+## ⭐ If OpenEval interests you, consider giving the repository a star.
 
-⭐ If you find OpenEval useful, consider giving the project a star.
+**Building reliable AI systems starts with measurable quality.**
 
 </div>
