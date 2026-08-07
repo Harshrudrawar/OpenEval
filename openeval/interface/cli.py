@@ -6,10 +6,12 @@ from typing import Any
 from openeval.application import (
     CreateEvaluationDefinitionUseCase,
     CreateRunUseCase,
+    EvaluateCaseResultsUseCase,
     ExecuteCasesUseCase,
     LoadCasesFromDatasetUseCase,
 )
 from openeval.infrastructure import (
+    AccuracyMetricPlugin,
     CsvDatasetLoader,
     InMemoryEvaluationRepository,
     InMemoryRunRepository,
@@ -123,10 +125,17 @@ def run_from_yaml(config_path: str) -> int:
     execute_cases_use_case = ExecuteCasesUseCase(target_executor)
     case_results = execute_cases_use_case.execute(cases, run.id)
 
+    metric_plugin = AccuracyMetricPlugin()
+    score_use_case = EvaluateCaseResultsUseCase(metric_plugin)
+    scores = score_use_case.execute(case_results, case_results)
+
+    accuracy = sum(score.value for score in scores) / len(scores) if scores else 0.0
+
     print_evaluation_summary(evaluation)
     print()
     print(f"Loaded {len(cases)} cases")
     print(f"Created {len(case_results)} case results")
+    print(f"Accuracy: {accuracy:.2f}")
     print()
     print("Run created successfully")
     print(f"Run ID: {run.id}")

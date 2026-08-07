@@ -23,6 +23,9 @@ class ExecuteCasesUseCase:
                 run_id=run_id,
                 actual_output=raw_output,
                 status="completed",
+                metadata={
+                    "expected_output": case.expected_output or {},
+                },
             )
             results.append(result)
 

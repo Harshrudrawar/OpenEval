@@ -1,5 +1,6 @@
 from .dataset_use_cases import LoadCasesFromDatasetUseCase
 from .execution_use_cases import ExecuteCasesUseCase
+from .metrics_use_cases import EvaluateCaseResultsUseCase
 from .ports import (
     DatasetLoader,
     DatasetRepository,
@@ -22,4 +23,5 @@ __all__ = [
     "CreateRunUseCase",
     "LoadCasesFromDatasetUseCase",
     "ExecuteCasesUseCase",
+    "EvaluateCaseResultsUseCase",
 ]

@@ -7,8 +7,8 @@ from openeval.application.ports import TargetExecutor
 
 class MockTargetExecutor(TargetExecutor):
     def execute(self, case: Any) -> dict[str, Any]:
-        input_data = getattr(case, "input_data", {})
+        expected_output = getattr(case, "expected_output", {}) or {}
         return {
-            "output": input_data,
+            "output": expected_output,
             "status": "ok",
         }
