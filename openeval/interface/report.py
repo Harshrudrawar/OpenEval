@@ -1,0 +1,262 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from html import escape
+from pathlib import Path
+
+
+def build_run_report_html(
+    *,
+    evaluation_name: str,
+    evaluation_id: str,
+    run_id: str,
+    dataset_version: str,
+    prompt_version: str,
+    provider: str,
+    model: str,
+    cases_count: int,
+    case_results_count: int,
+    accuracy: float,
+) -> str:
+    generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenEval Run Report</title>
+  <style>
+    :root {{
+      --bg: #f6f8fc;
+      --card: #ffffff;
+      --text: #172033;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --accent: #2563eb;
+      --accent-soft: #eff6ff;
+      --success: #16a34a;
+    }}
+
+    * {{
+      box-sizing: border-box;
+    }}
+
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }}
+
+    .container {{
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }}
+
+    .hero {{
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+      color: white;
+      border-radius: 24px;
+      padding: 28px;
+      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+      margin-bottom: 20px;
+    }}
+
+    .hero h1 {{
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.1;
+    }}
+
+    .hero p {{
+      margin: 0;
+      color: rgba(255, 255, 255, 0.88);
+      font-size: 15px;
+    }}
+
+    .subtle {{
+      margin-top: 10px;
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 13px;
+    }}
+
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 16px;
+      margin: 20px 0;
+    }}
+
+    .card {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
+    }}
+
+    .label {{
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }}
+
+    .value {{
+      font-size: 22px;
+      font-weight: 700;
+    }}
+
+    .section {{
+      margin-top: 18px;
+    }}
+
+    .section h2 {{
+      margin: 0 0 12px;
+      font-size: 18px;
+    }}
+
+    .meta {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+    }}
+
+    .meta-item {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+    }}
+
+    .meta-key {{
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }}
+
+    .meta-value {{
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }}
+
+    .footer {{
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }}
+
+    .badge {{
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.12);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      margin-bottom: 14px;
+    }}
+  </style>
+</head>
+<body>
+  <main class="container">
+    <section class="hero">
+      <div class="badge">OpenEval Run Report</div>
+      <h1>{escape(evaluation_name)}</h1>
+      <p>Run ID: {escape(run_id)} · Evaluation ID: {escape(evaluation_id)}</p>
+      <div class="subtle">Generated at {escape(generated_at)}</div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <span class="label">Accuracy</span>
+        <div class="value">{accuracy:.2f}</div>
+      </div>
+      <div class="card">
+        <span class="label">Cases Loaded</span>
+        <div class="value">{cases_count}</div>
+      </div>
+      <div class="card">
+        <span class="label">Case Results</span>
+        <div class="value">{case_results_count}</div>
+      </div>
+      <div class="card">
+        <span class="label">Provider</span>
+        <div class="value">{escape(provider)}</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Evaluation Details</h2>
+      <div class="meta">
+        <div class="meta-item">
+          <div class="meta-key">Dataset Version</div>
+          <div class="meta-value">{escape(dataset_version)}</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-key">Prompt Version</div>
+          <div class="meta-value">{escape(prompt_version)}</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-key">Model</div>
+          <div class="meta-value">{escape(model)}</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-key">Status</div>
+          <div class="meta-value" style="color: var(--success);">Completed</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer">
+      Built with OpenEval
+    </div>
+  </main>
+</body>
+</html>
+"""
+
+
+def write_run_report(
+    output_dir: str | Path,
+    *,
+    evaluation_name: str,
+    evaluation_id: str,
+    run_id: str,
+    dataset_version: str,
+    prompt_version: str,
+    provider: str,
+    model: str,
+    cases_count: int,
+    case_results_count: int,
+    accuracy: float,
+) -> Path:
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    report_path = out_dir / f"{run_id}.html"
+    report_path.write_text(
+        build_run_report_html(
+            evaluation_name=evaluation_name,
+            evaluation_id=evaluation_id,
+            run_id=run_id,
+            dataset_version=dataset_version,
+            prompt_version=prompt_version,
+            provider=provider,
+            model=model,
+            cases_count=cases_count,
+            case_results_count=case_results_count,
+            accuracy=accuracy,
+        ),
+        encoding="utf-8",
+    )
+
+    return report_path

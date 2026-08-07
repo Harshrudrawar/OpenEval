@@ -9,17 +9,15 @@ from openeval.application import (
     EvaluateCaseResultsUseCase,
     ExecuteCasesUseCase,
     LoadCasesFromDatasetUseCase,
-    TargetExecutor,
 )
 from openeval.infrastructure import (
     AccuracyMetricPlugin,
     CsvDatasetLoader,
     InMemoryEvaluationRepository,
     InMemoryRunRepository,
-    MockTargetExecutor,
-    OllamaTargetExecutor,
-    OpenAITargetExecutor,
 )
+from openeval.infrastructure.executor_factory import build_target_executor
+from openeval.interface.report import write_run_report
 from openeval.interface.yaml_loader import load_yaml
 
 
@@ -49,7 +47,10 @@ def build_parser() -> argparse.ArgumentParser:
         "run",
         help="Run an evaluation from a YAML file",
     )
-    run_parser.add_argument("config_path", help="Path to evaluation YAML file")
+    run_parser.add_argument(
+        "config_path",
+        help="Path to evaluation YAML file",
+    )
 
     return parser
 
@@ -67,24 +68,6 @@ def print_evaluation_summary(evaluation: Any) -> None:
     print(f"Dataset Version: {evaluation.dataset_version_id}")
     print(f"Prompt Version: {evaluation.prompt_version_id}")
     print(f"Metrics: {len(evaluation.metric_plugins)}")
-
-
-def build_target_executor(target: dict[str, Any]) -> TargetExecutor:
-    provider = str(target.get("provider", "mock")).strip().lower()
-
-    if provider == "openai":
-        model = str(target.get("model", "gpt-4o")).strip() or "gpt-4o"
-        return OpenAITargetExecutor(model=model)
-
-    if provider == "ollama":
-        model = str(target.get("model", "llama3")).strip() or "llama3"
-        base_url = (
-            str(target.get("base_url", "http://localhost:11434/api")).strip()
-            or "http://localhost:11434/api"
-        )
-        return OllamaTargetExecutor(model=model, base_url=base_url)
-
-    return MockTargetExecutor()
 
 
 def run_from_yaml(config_path: str) -> int:
@@ -133,6 +116,7 @@ def run_from_yaml(config_path: str) -> int:
 
     dataset_loader = CsvDatasetLoader()
     load_cases_use_case = LoadCasesFromDatasetUseCase(dataset_loader)
+
     cases = load_cases_use_case.execute(
         dataset_path=dataset_path,
         evaluation_definition_id=evaluation.id,
@@ -144,23 +128,53 @@ def run_from_yaml(config_path: str) -> int:
 
     target_executor = build_target_executor(target)
     execute_cases_use_case = ExecuteCasesUseCase(target_executor)
-    case_results = execute_cases_use_case.execute(cases, run.id)
+
+    case_results = execute_cases_use_case.execute(
+        cases,
+        run.id,
+    )
 
     metric_plugin = AccuracyMetricPlugin()
     score_use_case = EvaluateCaseResultsUseCase(metric_plugin)
-    scores = score_use_case.execute(case_results, case_results)
+
+    scores = score_use_case.execute(
+        case_results,
+        case_results,
+    )
 
     accuracy = sum(score.value for score in scores) / len(scores) if scores else 0.0
 
+    provider = str(target.get("provider", "mock")).strip() or "mock"
+    model = str(target.get("model", "unknown")).strip() or "unknown"
+
+    report_path = write_run_report(
+        "reports",
+        evaluation_name=evaluation.name,
+        evaluation_id=evaluation.id,
+        run_id=run.id,
+        dataset_version=dataset_version_id,
+        prompt_version=prompt_version_id,
+        provider=provider,
+        model=model,
+        cases_count=len(cases),
+        case_results_count=len(case_results),
+        accuracy=accuracy,
+    )
+
     print_evaluation_summary(evaluation)
+
     print()
     print(f"Loaded {len(cases)} cases")
     print(f"Created {len(case_results)} case results")
     print(f"Accuracy: {accuracy:.2f}")
+
     print()
     print("Run created successfully")
     print(f"Run ID: {run.id}")
     print(f"Run Status: {run.status}")
+
+    print()
+    print(f"Report written to: {report_path}")
 
     return 0
 
