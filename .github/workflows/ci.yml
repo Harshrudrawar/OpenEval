@@ -36,3 +36,6 @@ jobs:
 
       - name: Run Pytest
         run: pytest
+
+      - name: Run OpenEval example
+        run: python -m openeval.interface.cli run examples/basic/evaluation.yaml
