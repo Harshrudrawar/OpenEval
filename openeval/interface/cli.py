@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from typing import Any
 
 from openeval.application import (
@@ -71,6 +72,8 @@ def print_evaluation_summary(evaluation: Any) -> None:
 
 
 def run_from_yaml(config_path: str) -> int:
+    started_at = time.perf_counter()
+
     config = load_yaml(config_path)
 
     name = config.get("name", "")
@@ -143,6 +146,7 @@ def run_from_yaml(config_path: str) -> int:
     )
 
     accuracy = sum(score.value for score in scores) / len(scores) if scores else 0.0
+    latency_ms = (time.perf_counter() - started_at) * 1000
 
     provider = str(target.get("provider", "mock")).strip() or "mock"
     model = str(target.get("model", "unknown")).strip() or "unknown"
@@ -159,6 +163,7 @@ def run_from_yaml(config_path: str) -> int:
         cases_count=len(cases),
         case_results_count=len(case_results),
         accuracy=accuracy,
+        latency_ms=latency_ms,
     )
 
     print_evaluation_summary(evaluation)
@@ -167,6 +172,7 @@ def run_from_yaml(config_path: str) -> int:
     print(f"Loaded {len(cases)} cases")
     print(f"Created {len(case_results)} case results")
     print(f"Accuracy: {accuracy:.2f}")
+    print(f"Latency: {latency_ms:.0f} ms")
 
     print()
     print("Run created successfully")

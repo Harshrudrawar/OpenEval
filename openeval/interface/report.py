@@ -17,6 +17,7 @@ def build_run_report_html(
     cases_count: int,
     case_results_count: int,
     accuracy: float,
+    latency_ms: float,
 ) -> str:
     generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -181,16 +182,16 @@ def build_run_report_html(
         <div class="value">{accuracy:.2f}</div>
       </div>
       <div class="card">
+        <span class="label">Latency</span>
+        <div class="value">{latency_ms:.0f} ms</div>
+      </div>
+      <div class="card">
         <span class="label">Cases Loaded</span>
         <div class="value">{cases_count}</div>
       </div>
       <div class="card">
         <span class="label">Case Results</span>
         <div class="value">{case_results_count}</div>
-      </div>
-      <div class="card">
-        <span class="label">Provider</span>
-        <div class="value">{escape(provider)}</div>
       </div>
     </section>
 
@@ -204,6 +205,10 @@ def build_run_report_html(
         <div class="meta-item">
           <div class="meta-key">Prompt Version</div>
           <div class="meta-value">{escape(prompt_version)}</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-key">Provider</div>
+          <div class="meta-value">{escape(provider)}</div>
         </div>
         <div class="meta-item">
           <div class="meta-key">Model</div>
@@ -238,6 +243,7 @@ def write_run_report(
     cases_count: int,
     case_results_count: int,
     accuracy: float,
+    latency_ms: float,
 ) -> Path:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -255,6 +261,7 @@ def write_run_report(
             cases_count=cases_count,
             case_results_count=case_results_count,
             accuracy=accuracy,
+            latency_ms=latency_ms,
         ),
         encoding="utf-8",
     )
