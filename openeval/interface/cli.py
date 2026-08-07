@@ -122,7 +122,6 @@ def run_from_yaml(config_path: str) -> int:
         prompt_version_id=prompt_version_id,
         target=target,
         metric_plugins=metric_plugins,
-        gate=gate_config or None,
     )
 
     dataset_loader = CsvDatasetLoader()
@@ -198,9 +197,11 @@ def run_from_yaml(config_path: str) -> int:
 
     if gate_threshold is None:
         print("Quality Gate: Not configured")
+        exit_code = 0
     else:
         gate_status = "PASSED" if gate_passed else "FAILED"
         print(f"Quality Gate: {gate_status} (threshold: {gate_threshold:.2f})")
+        exit_code = 0 if gate_passed else 1
 
     print()
     print("Run created successfully")
@@ -210,7 +211,7 @@ def run_from_yaml(config_path: str) -> int:
     print()
     print(f"Report written to: {report_path}")
 
-    return 0
+    return exit_code
 
 
 def main() -> int:
