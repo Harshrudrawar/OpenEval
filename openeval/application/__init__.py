@@ -1,4 +1,6 @@
+from .dataset_use_cases import LoadCasesFromDatasetUseCase
 from .ports import (
+    DatasetLoader,
     DatasetRepository,
     EvaluationRepository,
     PromptRepository,
@@ -8,10 +10,12 @@ from .run_use_cases import CreateRunUseCase
 from .use_cases import CreateEvaluationDefinitionUseCase
 
 __all__ = [
-    "EvaluationRepository",
+    "DatasetLoader",
     "DatasetRepository",
+    "EvaluationRepository",
     "PromptRepository",
     "RunRepository",
     "CreateEvaluationDefinitionUseCase",
     "CreateRunUseCase",
+    "LoadCasesFromDatasetUseCase",
 ]

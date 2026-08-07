@@ -24,6 +24,19 @@ class DatasetRepository(ABC):
         raise NotImplementedError
 
 
+class DatasetLoader(ABC):
+    """
+    Contract for loading dataset rows from a data source.
+
+    Implementations may load CSV, JSON, JSONL, Parquet,
+    Hugging Face datasets, databases, etc.
+    """
+
+    @abstractmethod
+    def load_rows(self, path: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+
 class PromptRepository(ABC):
     @abstractmethod
     def save(self, prompt: Any) -> None:

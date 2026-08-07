@@ -2,6 +2,7 @@ name: Demo Evaluation
 
 dataset:
   version: dataset-v1
+  path: examples/basic/dataset.csv
 
 prompt:
   version: prompt-v1

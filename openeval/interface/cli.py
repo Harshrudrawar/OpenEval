@@ -6,8 +6,10 @@ from typing import Any
 from openeval.application import (
     CreateEvaluationDefinitionUseCase,
     CreateRunUseCase,
+    LoadCasesFromDatasetUseCase,
 )
 from openeval.infrastructure import (
+    CsvDatasetLoader,
     InMemoryEvaluationRepository,
     InMemoryRunRepository,
 )
@@ -64,10 +66,16 @@ def run_from_yaml(config_path: str) -> int:
     config = load_yaml(config_path)
 
     name = config.get("name", "")
-    dataset_version_id = config.get("dataset", {}).get("version", "")
-    prompt_version_id = config.get("prompt", {}).get("version", "")
+    dataset_config = config.get("dataset", {})
+    prompt_config = config.get("prompt", {})
     target = config.get("target", {})
     metrics = config.get("metrics", [])
+
+    if not isinstance(dataset_config, dict):
+        raise ValueError("dataset must be a YAML mapping/object")
+
+    if not isinstance(prompt_config, dict):
+        raise ValueError("prompt must be a YAML mapping/object")
 
     if not isinstance(target, dict):
         raise ValueError("target must be a YAML mapping/object")
@@ -75,10 +83,22 @@ def run_from_yaml(config_path: str) -> int:
     if not isinstance(metrics, list):
         raise ValueError("metrics must be a YAML list")
 
+    dataset_path = dataset_config.get("path", "")
+    if not isinstance(dataset_path, str) or not dataset_path.strip():
+        raise ValueError("dataset.path must be a non-empty string")
+
+    dataset_version_id = dataset_config.get("version", "")
+    if not isinstance(dataset_version_id, str) or not dataset_version_id.strip():
+        raise ValueError("dataset.version must be a non-empty string")
+
+    prompt_version_id = prompt_config.get("version", "")
+    if not isinstance(prompt_version_id, str) or not prompt_version_id.strip():
+        raise ValueError("prompt.version must be a non-empty string")
+
     metric_plugins = [{"name": metric} for metric in metrics]
 
-    use_case = create_use_case()
-    evaluation = use_case.execute(
+    evaluation_use_case = create_use_case()
+    evaluation = evaluation_use_case.execute(
         name=name,
         dataset_version_id=dataset_version_id,
         prompt_version_id=prompt_version_id,
@@ -86,11 +106,20 @@ def run_from_yaml(config_path: str) -> int:
         metric_plugins=metric_plugins,
     )
 
+    dataset_loader = CsvDatasetLoader()
+    load_cases_use_case = LoadCasesFromDatasetUseCase(dataset_loader)
+    cases = load_cases_use_case.execute(
+        dataset_path=dataset_path,
+        evaluation_definition_id=evaluation.id,
+    )
+
     run_repository = InMemoryRunRepository()
     run_use_case = CreateRunUseCase(run_repository)
     run = run_use_case.execute(evaluation.id)
 
     print_evaluation_summary(evaluation)
+    print()
+    print(f"Loaded {len(cases)} cases")
     print()
     print("Run created successfully")
     print(f"Run ID: {run.id}")
