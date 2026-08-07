@@ -6,12 +6,14 @@ from typing import Any
 from openeval.application import (
     CreateEvaluationDefinitionUseCase,
     CreateRunUseCase,
+    ExecuteCasesUseCase,
     LoadCasesFromDatasetUseCase,
 )
 from openeval.infrastructure import (
     CsvDatasetLoader,
     InMemoryEvaluationRepository,
     InMemoryRunRepository,
+    MockTargetExecutor,
 )
 from openeval.interface.yaml_loader import load_yaml
 
@@ -117,9 +119,14 @@ def run_from_yaml(config_path: str) -> int:
     run_use_case = CreateRunUseCase(run_repository)
     run = run_use_case.execute(evaluation.id)
 
+    target_executor = MockTargetExecutor()
+    execute_cases_use_case = ExecuteCasesUseCase(target_executor)
+    case_results = execute_cases_use_case.execute(cases, run.id)
+
     print_evaluation_summary(evaluation)
     print()
     print(f"Loaded {len(cases)} cases")
+    print(f"Created {len(case_results)} case results")
     print()
     print("Run created successfully")
     print(f"Run ID: {run.id}")

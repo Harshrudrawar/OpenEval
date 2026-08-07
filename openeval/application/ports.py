@@ -55,3 +55,9 @@ class RunRepository(ABC):
     @abstractmethod
     def get_by_id(self, run_id: str) -> Any | None:
         raise NotImplementedError
+
+
+class TargetExecutor(ABC):
+    @abstractmethod
+    def execute(self, case: Any) -> dict[str, Any]:
+        raise NotImplementedError
