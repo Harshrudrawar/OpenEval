@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from openeval.infrastructure.metric_plugins import AccuracyMetricPlugin
+from openeval.infrastructure.metric_plugins import (
+    AccuracyMetricPlugin,
+    ContainsMetricPlugin,
+    build_metric_plugin,
+)
 
 
 def test_accuracy_metric_plugin_returns_one_for_exact_match() -> None:
@@ -26,7 +30,7 @@ def test_accuracy_metric_plugin_returns_zero_for_mismatch() -> None:
 
 
 def test_accuracy_metric_plugin_returns_one_for_contained_short_answer() -> None:
-    plugin = AccuracyMetricPlugin()
+    plugin = ContainsMetricPlugin()
 
     score = plugin.evaluate(
         expected_output={"expected_output": "Paris"},
@@ -34,3 +38,9 @@ def test_accuracy_metric_plugin_returns_one_for_contained_short_answer() -> None
     )
 
     assert score == 1.0
+
+
+def test_build_metric_plugin_returns_contains_plugin() -> None:
+    plugin = build_metric_plugin("contains")
+
+    assert isinstance(plugin, ContainsMetricPlugin)

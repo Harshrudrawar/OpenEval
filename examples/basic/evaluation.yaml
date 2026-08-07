@@ -11,7 +11,7 @@ target:
   provider: mock
 
 metrics:
-  - accuracy
+   - contains
 
 gate:
   accuracy: 0.80

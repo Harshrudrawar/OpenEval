@@ -15,12 +15,12 @@ from openeval.application import (
 )
 from openeval.application.comparison_use_cases import CompareScoresUseCase
 from openeval.infrastructure import (
-    AccuracyMetricPlugin,
     CsvDatasetLoader,
     InMemoryEvaluationRepository,
     InMemoryRunRepository,
 )
 from openeval.infrastructure.executor_factory import build_target_executor
+from openeval.infrastructure.metric_plugins import build_metric_plugin
 from openeval.interface.report import write_comparison_report, write_run_report
 from openeval.interface.yaml_loader import load_yaml
 
@@ -31,8 +31,8 @@ class EvaluationInputs:
     dataset_path: str
     dataset_version_id: str
     prompt_version_id: str
+    metric_name: str
     target: dict[str, Any]
-    metric_plugins: list[dict[str, Any]]
     gate_config: dict[str, Any]
 
 
@@ -179,15 +179,20 @@ def _load_inputs(config_path: str) -> EvaluationInputs:
     if not isinstance(prompt_version_id, str) or not prompt_version_id.strip():
         raise ValueError("prompt.version must be a non-empty string")
 
-    metric_plugins = [{"name": metric} for metric in metrics]
+    if len(metrics) != 1:
+        raise ValueError("metrics must contain exactly one metric for now")
+
+    metric_name = metrics[0]
+    if not isinstance(metric_name, str) or not metric_name.strip():
+        raise ValueError("metrics[0] must be a non-empty string")
 
     return EvaluationInputs(
         name=name,
         dataset_path=dataset_path,
         dataset_version_id=dataset_version_id,
         prompt_version_id=prompt_version_id,
+        metric_name=metric_name.strip(),
         target=target,
-        metric_plugins=metric_plugins,
         gate_config=gate_config,
     )
 
@@ -224,7 +229,7 @@ def _execute_single_run(
         dataset_version_id=inputs.dataset_version_id,
         prompt_version_id=inputs.prompt_version_id,
         target=target,
-        metric_plugins=inputs.metric_plugins,
+        metric_plugins=[{"name": inputs.metric_name}],
         gate=inputs.gate_config or None,
     )
 
@@ -243,7 +248,7 @@ def _execute_single_run(
     execute_cases_use_case = ExecuteCasesUseCase(target_executor)
     case_results = execute_cases_use_case.execute(cases, run.id)
 
-    metric_plugin = AccuracyMetricPlugin()
+    metric_plugin = build_metric_plugin(inputs.metric_name)
     score_use_case = EvaluateCaseResultsUseCase(metric_plugin)
     scores = score_use_case.execute(case_results, case_results)
 
@@ -317,7 +322,7 @@ def run_from_yaml(config_path: str) -> int:
                 "name": outcome.evaluation_name,
                 "dataset_version_id": inputs.dataset_version_id,
                 "prompt_version_id": inputs.prompt_version_id,
-                "metric_plugins": inputs.metric_plugins,
+                "metric_plugins": [{"name": inputs.metric_name}],
             },
         )(),
     )
@@ -388,6 +393,17 @@ def compare_from_yaml(
         left_accuracy=left_outcome.accuracy,
         right_accuracy=right_outcome.accuracy,
     )
+
+    print("✔ Comparison completed successfully")
+    print()
+    print(f"Dataset Version: {inputs.dataset_version_id}")
+    print(f"Prompt Version: {inputs.prompt_version_id}")
+    print()
+    print(f"Left  ({comparison.left_name}): {comparison.left_accuracy:.2f}")
+    print(f"Right ({comparison.right_name}): {comparison.right_accuracy:.2f}")
+    print(f"Winner: {comparison.winner}")
+    print(f"Margin: {comparison.margin:.2f}")
+
     report_path = write_comparison_report(
         "reports",
         evaluation_name=inputs.name,
@@ -402,17 +418,8 @@ def compare_from_yaml(
         margin=comparison.margin,
     )
 
+    print()
     print(f"Report written to: {report_path}")
-
-    print("✔ Comparison completed successfully")
-    print()
-    print(f"Dataset Version: {inputs.dataset_version_id}")
-    print(f"Prompt Version: {inputs.prompt_version_id}")
-    print()
-    print(f"Left  ({comparison.left_name}): {comparison.left_accuracy:.2f}")
-    print(f"Right ({comparison.right_name}): {comparison.right_accuracy:.2f}")
-    print(f"Winner: {comparison.winner}")
-    print(f"Margin: {comparison.margin:.2f}")
 
     return 0
 

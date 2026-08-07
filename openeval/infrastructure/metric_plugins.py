@@ -50,13 +50,35 @@ class AccuracyMetricPlugin(MetricPlugin):
         actual_output: dict[str, Any],
     ) -> float:
         returned_output = actual_output.get("output", {})
+        return (
+            1.0
+            if _normalize_structure(expected_output)
+            == _normalize_structure(returned_output)
+            else 0.0
+        )
 
-        if _normalize_structure(expected_output) == _normalize_structure(
-            returned_output
-        ):
-            return 1.0
 
+class ContainsMetricPlugin(MetricPlugin):
+    name = "contains"
+
+    def evaluate(
+        self,
+        expected_output: dict[str, Any],
+        actual_output: dict[str, Any],
+    ) -> float:
+        returned_output = actual_output.get("output", {})
         expected_text = _flatten_text(expected_output)
         actual_text = _flatten_text(returned_output)
-
         return 1.0 if _contains_expected(expected_text, actual_text) else 0.0
+
+
+def build_metric_plugin(name: str) -> MetricPlugin:
+    metric_name = name.strip().casefold()
+
+    if metric_name == "accuracy":
+        return AccuracyMetricPlugin()
+
+    if metric_name == "contains":
+        return ContainsMetricPlugin()
+
+    raise ValueError(f"Unsupported metric plugin: {name}")
