@@ -19,3 +19,6 @@ gate:
 baseline:
   provider: mock
   model: baseline
+
+regression:
+  max_drop: 0.05

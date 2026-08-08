@@ -35,6 +35,7 @@ class EvaluationInputs:
     target: dict[str, Any]
     gate_config: dict[str, Any]
     baseline: dict[str, Any] | None
+    regression_config: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -153,6 +154,7 @@ def _load_inputs(config_path: str) -> EvaluationInputs:
     metrics = config.get("metrics", [])
     gate_config = config.get("gate", {})
     baseline = config.get("baseline")
+    regression_config = config.get("regression", {})
 
     if not isinstance(dataset_config, dict):
         raise ValueError("dataset must be a YAML mapping/object")
@@ -174,6 +176,12 @@ def _load_inputs(config_path: str) -> EvaluationInputs:
 
     if baseline is not None and not isinstance(baseline, dict):
         raise ValueError("baseline must be a YAML mapping/object")
+
+    if regression_config is None:
+        regression_config = {}
+
+    if not isinstance(regression_config, dict):
+        raise ValueError("regression must be a YAML mapping/object")
 
     dataset_path = dataset_config.get("path", "")
     if not isinstance(dataset_path, str) or not dataset_path.strip():
@@ -203,6 +211,7 @@ def _load_inputs(config_path: str) -> EvaluationInputs:
         target=target,
         gate_config=gate_config,
         baseline=baseline,
+        regression_config=regression_config,
     )
 
 
@@ -396,10 +405,29 @@ def run_from_yaml(config_path: str) -> int:
             write_report=False,
         )
 
+        regression_raw = inputs.regression_config.get("max_drop", 0.0)
+
+        try:
+            max_drop = float(regression_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("regression.max_drop must be a number") from exc
+
+        if max_drop < 0:
+            raise ValueError("regression.max_drop must be greater than or equal to 0")
+
+        delta = outcome.accuracy - baseline_outcome.accuracy
+        regression_passed = delta >= -max_drop
+
         _print_regression_summary(
             current=outcome,
             baseline=baseline_outcome,
         )
+
+        print(f"Allowed Drop: {max_drop:.2f}")
+        print("Regression Gate: " f"{'PASSED' if regression_passed else 'FAILED'}")
+
+        if not regression_passed:
+            exit_code = 1
 
     print()
     print("Run created successfully")
