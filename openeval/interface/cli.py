@@ -131,6 +131,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=20,
         help="Number of history entries to show",
     )
+    history_parser.add_argument(
+        "--kind",
+        choices=["all", "run", "comparison"],
+        default="all",
+        help="Filter history entries by kind",
+    )
 
     return parser
 
@@ -191,23 +197,29 @@ def _format_tri_state(value: Any) -> str:
     return "N/A"
 
 
-def history_from_jsonl(limit: int = 20) -> int:
+def history_from_jsonl(limit: int = 20, kind: str = "all") -> int:
     if limit <= 0:
         raise ValueError("history limit must be greater than 0")
 
     entries = _load_history_entries()
 
+    if kind != "all":
+        entries = [entry for entry in entries if entry.get("kind", "unknown") == kind]
+
     if not entries:
-        print("No history yet.")
+        if kind == "all":
+            print("No history yet.")
+        else:
+            print(f"No {kind} history yet.")
         return 0
 
     print("OpenEval History")
     print()
 
     for entry in reversed(entries[-limit:]):
-        kind = entry.get("kind", "unknown")
+        entry_kind = entry.get("kind", "unknown")
 
-        if kind == "run":
+        if entry_kind == "run":
             gate_status = _format_tri_state(entry.get("gate_passed"))
             regression_status = _format_tri_state(entry.get("regression_passed"))
 
@@ -222,7 +234,7 @@ def history_from_jsonl(limit: int = 20) -> int:
 
             continue
 
-        if kind == "comparison":
+        if entry_kind == "comparison":
             print("COMPARISON")
             print(f"Left: {entry.get('left_name', '')}")
             print(f"Right: {entry.get('right_name', '')}")
@@ -700,7 +712,7 @@ def main() -> int:
         )
 
     if args.command == "history":
-        return history_from_jsonl(args.limit)
+        return history_from_jsonl(args.limit, args.kind)
 
     return 1
 
