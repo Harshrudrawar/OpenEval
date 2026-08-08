@@ -197,6 +197,15 @@ def _format_tri_state(value: Any) -> str:
     return "N/A"
 
 
+def _history_text(entry: dict[str, Any], key: str) -> str | None:
+    value = entry.get(key)
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    return text or None
+
+
 def history_from_jsonl(limit: int = 20, kind: str = "all") -> int:
     if limit <= 0:
         raise ValueError("history limit must be greater than 0")
@@ -227,11 +236,20 @@ def history_from_jsonl(limit: int = 20, kind: str = "all") -> int:
             print(f"Evaluation: {entry.get('evaluation_name', '')}")
             print(f"Provider: {entry.get('provider', '')}")
             print(f"Model: {entry.get('model', '')}")
+            print(f"Metric: {entry.get('metric_name', '')}")
             print(f"Accuracy: {float(entry.get('accuracy', 0.0)):.2f}")
             print(f"Gate: {gate_status}")
             print(f"Regression: {regression_status}")
-            print()
 
+            baseline_source = entry.get("baseline_source")
+            if baseline_source is not None:
+                print(f"Baseline Source: {baseline_source}")
+
+            if "baseline_found" in entry:
+                baseline_found = "yes" if entry.get("baseline_found") else "no"
+                print(f"Baseline Found: {baseline_found}")
+
+            print()
             continue
 
         if entry_kind == "comparison":
@@ -241,7 +259,6 @@ def history_from_jsonl(limit: int = 20, kind: str = "all") -> int:
             print(f"Winner: {entry.get('winner', '')}")
             print(f"Margin: {float(entry.get('margin', 0.0)):.2f}")
             print()
-
             continue
 
         print("UNKNOWN")
@@ -340,6 +357,81 @@ def _resolve_target(
     resolved_target["model"] = model_name
 
     return resolved_target
+
+
+def _find_historical_baseline(
+    inputs: EvaluationInputs,
+    *,
+    provider: str,
+    model: str,
+) -> RunOutcome | None:
+    entries = _load_history_entries()
+
+    for entry in reversed(entries):
+        if entry.get("kind") != "run":
+            continue
+
+        for key, expected in (
+            ("evaluation_name", inputs.name),
+            ("dataset_version_id", inputs.dataset_version_id),
+            ("prompt_version_id", inputs.prompt_version_id),
+            ("metric_name", inputs.metric_name),
+            ("provider", provider),
+            ("model", model),
+        ):
+            if _history_text(entry, key) != expected:
+                break
+        else:
+            if entry.get("gate_passed") is False:
+                continue
+
+            if entry.get("regression_passed") is False:
+                continue
+
+            run_id = _history_text(entry, "run_id")
+            evaluation_id = _history_text(entry, "evaluation_id")
+            evaluation_name = _history_text(entry, "evaluation_name")
+            entry_provider = _history_text(entry, "provider")
+            entry_model = _history_text(entry, "model")
+
+            if (
+                run_id is None
+                or evaluation_id is None
+                or evaluation_name is None
+                or entry_provider is None
+                or entry_model is None
+            ):
+                continue
+
+            try:
+                accuracy = float(entry.get("accuracy", 0.0))
+            except (TypeError, ValueError):
+                continue
+
+            try:
+                latency_ms = float(entry.get("latency_ms", 0.0))
+            except (TypeError, ValueError):
+                latency_ms = 0.0
+
+            gate_passed_raw = entry.get("gate_passed")
+            gate_passed = gate_passed_raw if isinstance(gate_passed_raw, bool) else None
+
+            return RunOutcome(
+                evaluation_name=evaluation_name,
+                evaluation_id=evaluation_id,
+                run_id=run_id,
+                provider=entry_provider,
+                model=entry_model,
+                cases_count=0,
+                case_results_count=0,
+                accuracy=accuracy,
+                latency_ms=latency_ms,
+                gate_threshold=None,
+                gate_passed=gate_passed,
+                report_path=None,
+            )
+
+    return None
 
 
 def _execute_single_run(
@@ -446,6 +538,7 @@ def _print_regression_summary(
     *,
     current: RunOutcome,
     baseline: RunOutcome,
+    header: str = "Baseline Regression Check",
 ) -> None:
     delta = current.accuracy - baseline.accuracy
 
@@ -457,7 +550,7 @@ def _print_regression_summary(
         status = "UNCHANGED"
 
     print()
-    print("Baseline Regression Check")
+    print(header)
     print(
         f"Baseline ({baseline.provider}:{baseline.model}): " f"{baseline.accuracy:.2f}"
     )
@@ -505,53 +598,116 @@ def run_from_yaml(config_path: str) -> int:
         )
         exit_code = 0 if outcome.gate_passed else 1
 
+    baseline_source: str | None = None
     baseline_provider: str | None = None
     baseline_model: str | None = None
+    baseline_run_id: str | None = None
     baseline_outcome: RunOutcome | None = None
     regression_delta: float | None = None
     regression_passed: bool | None = None
+    baseline_found: bool | None = None
 
     if inputs.baseline is not None:
-        baseline_provider = (
-            str(inputs.baseline.get("provider", "mock")).strip() or "mock"
-        )
-        baseline_model = str(inputs.baseline.get("model", "")).strip()
-
-        baseline_target = _resolve_target(
-            inputs.target,
-            provider=baseline_provider,
-            model=baseline_model,
+        baseline_source = (
+            str(inputs.baseline.get("source", "explicit")).strip().lower() or "explicit"
         )
 
-        baseline_outcome = _execute_single_run(
-            inputs,
-            target=baseline_target,
-            write_report=False,
-        )
+        if baseline_source == "history":
+            baseline_outcome = _find_historical_baseline(
+                inputs,
+                provider=outcome.provider,
+                model=outcome.model,
+            )
+            baseline_found = baseline_outcome is not None
 
-        regression_raw = inputs.regression_config.get("max_drop", 0.0)
+            if baseline_outcome is None:
+                print()
+                print("Historical Baseline Check")
+                print("No matching historical baseline found.")
+                print("Regression Gate: FAILED")
+                exit_code = 1
+            else:
+                baseline_provider = baseline_outcome.provider
+                baseline_model = baseline_outcome.model
+                baseline_run_id = baseline_outcome.run_id
 
-        try:
-            max_drop = float(regression_raw)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("regression.max_drop must be a number") from exc
+                regression_raw = inputs.regression_config.get("max_drop", 0.0)
 
-        if max_drop < 0:
-            raise ValueError("regression.max_drop must be greater than or equal to 0")
+                try:
+                    max_drop = float(regression_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("regression.max_drop must be a number") from exc
 
-        regression_delta = outcome.accuracy - baseline_outcome.accuracy
-        regression_passed = regression_delta >= -max_drop
+                if max_drop < 0:
+                    raise ValueError(
+                        "regression.max_drop must be greater than or equal to 0"
+                    )
 
-        _print_regression_summary(
-            current=outcome,
-            baseline=baseline_outcome,
-        )
+                regression_delta = outcome.accuracy - baseline_outcome.accuracy
+                regression_passed = regression_delta >= -max_drop
 
-        print(f"Allowed Drop: {max_drop:.2f}")
-        print("Regression Gate: " f"{'PASSED' if regression_passed else 'FAILED'}")
+                _print_regression_summary(
+                    current=outcome,
+                    baseline=baseline_outcome,
+                    header="Historical Baseline Check",
+                )
 
-        if not regression_passed:
-            exit_code = 1
+                print(f"Allowed Drop: {max_drop:.2f}")
+                print(
+                    "Regression Gate: " f"{'PASSED' if regression_passed else 'FAILED'}"
+                )
+
+                if not regression_passed:
+                    exit_code = 1
+
+        else:
+            baseline_provider = (
+                str(inputs.baseline.get("provider", "mock")).strip() or "mock"
+            )
+            baseline_model = str(inputs.baseline.get("model", "")).strip()
+
+            baseline_target = _resolve_target(
+                inputs.target,
+                provider=baseline_provider,
+                model=baseline_model,
+            )
+
+            baseline_outcome = _execute_single_run(
+                inputs,
+                target=baseline_target,
+                write_report=False,
+            )
+
+            baseline_found = True
+            baseline_provider = baseline_outcome.provider
+            baseline_model = baseline_outcome.model
+            baseline_run_id = baseline_outcome.run_id
+
+            regression_raw = inputs.regression_config.get("max_drop", 0.0)
+
+            try:
+                max_drop = float(regression_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("regression.max_drop must be a number") from exc
+
+            if max_drop < 0:
+                raise ValueError(
+                    "regression.max_drop must be greater than or equal to 0"
+                )
+
+            regression_delta = outcome.accuracy - baseline_outcome.accuracy
+            regression_passed = regression_delta >= -max_drop
+
+            _print_regression_summary(
+                current=outcome,
+                baseline=baseline_outcome,
+            )
+
+            print(f"Allowed Drop: {max_drop:.2f}")
+            print("Regression Gate: " f"{'PASSED' if regression_passed else 'FAILED'}")
+
+            if not regression_passed:
+                exit_code = 1
 
     history_path = append_run_history(
         {
@@ -560,12 +716,18 @@ def run_from_yaml(config_path: str) -> int:
             "evaluation_name": outcome.evaluation_name,
             "evaluation_id": outcome.evaluation_id,
             "run_id": outcome.run_id,
+            "dataset_version_id": inputs.dataset_version_id,
+            "prompt_version_id": inputs.prompt_version_id,
+            "metric_name": inputs.metric_name,
             "provider": outcome.provider,
             "model": outcome.model,
             "accuracy": outcome.accuracy,
             "latency_ms": outcome.latency_ms,
             "gate_threshold": outcome.gate_threshold,
             "gate_passed": outcome.gate_passed,
+            "baseline_source": baseline_source,
+            "baseline_found": baseline_found,
+            "baseline_run_id": baseline_run_id,
             "baseline_provider": baseline_provider,
             "baseline_model": baseline_model,
             "baseline_accuracy": (
@@ -637,8 +799,8 @@ def compare_from_yaml(
     print(f"Dataset Version: {inputs.dataset_version_id}")
     print(f"Prompt Version: {inputs.prompt_version_id}")
     print()
-    print(f"Left  ({comparison.left_name}): " f"{comparison.left_accuracy:.2f}")
-    print(f"Right ({comparison.right_name}): " f"{comparison.right_accuracy:.2f}")
+    print(f"Left  ({comparison.left_name}): {comparison.left_accuracy:.2f}")
+    print(f"Right ({comparison.right_name}): {comparison.right_accuracy:.2f}")
     print(f"Winner: {comparison.winner}")
     print(f"Margin: {comparison.margin:.2f}")
 
@@ -648,8 +810,8 @@ def compare_from_yaml(
         evaluation_id=left_outcome.evaluation_id,
         dataset_version=inputs.dataset_version_id,
         prompt_version=inputs.prompt_version_id,
-        left_name=(f"{left_outcome.provider}:{left_outcome.model}"),
-        right_name=(f"{right_outcome.provider}:{right_outcome.model}"),
+        left_name=f"{left_outcome.provider}:{left_outcome.model}",
+        right_name=f"{right_outcome.provider}:{right_outcome.model}",
         left_accuracy=left_outcome.accuracy,
         right_accuracy=right_outcome.accuracy,
         winner=comparison.winner,
@@ -667,8 +829,8 @@ def compare_from_yaml(
             "evaluation_id": left_outcome.evaluation_id,
             "dataset_version_id": inputs.dataset_version_id,
             "prompt_version_id": inputs.prompt_version_id,
-            "left_name": (f"{left_outcome.provider}:{left_outcome.model}"),
-            "right_name": (f"{right_outcome.provider}:{right_outcome.model}"),
+            "left_name": f"{left_outcome.provider}:{left_outcome.model}",
+            "right_name": f"{right_outcome.provider}:{right_outcome.model}",
             "left_accuracy": left_outcome.accuracy,
             "right_accuracy": right_outcome.accuracy,
             "winner": comparison.winner,
