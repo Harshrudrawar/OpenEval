@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
+from typing import Any
 
 
 def build_run_report_html(
@@ -538,3 +540,19 @@ def write_comparison_report(
     )
 
     return report_path
+
+
+RUN_HISTORY_PATH = Path("reports") / "run-history.jsonl"
+
+
+def append_run_history(
+    record: dict[str, Any],
+    history_path: str | Path = RUN_HISTORY_PATH,
+) -> Path:
+    path = Path(history_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    return path

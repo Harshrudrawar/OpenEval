@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,8 @@ from openeval.infrastructure.executor_factory import build_target_executor
 from openeval.infrastructure.metric_plugins import build_metric_plugin
 from openeval.interface.report import write_comparison_report, write_run_report
 from openeval.interface.yaml_loader import load_yaml
+
+RUN_HISTORY_PATH = Path("reports") / "run-history.jsonl"
 
 
 @dataclass(frozen=True)
@@ -142,6 +145,19 @@ def _default_model_for_provider(provider: str) -> str:
         return "llama3"
 
     return "unknown"
+
+
+def _append_run_history(
+    record: dict[str, Any],
+    history_path: str | Path = RUN_HISTORY_PATH,
+) -> Path:
+    path = Path(history_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    return path
 
 
 def _load_inputs(config_path: str) -> EvaluationInputs:
@@ -387,6 +403,12 @@ def run_from_yaml(config_path: str) -> int:
         )
         exit_code = 0 if outcome.gate_passed else 1
 
+    baseline_provider: str | None = None
+    baseline_model: str | None = None
+    baseline_outcome: RunOutcome | None = None
+    regression_delta: float | None = None
+    regression_passed: bool | None = None
+
     if inputs.baseline is not None:
         baseline_provider = (
             str(inputs.baseline.get("provider", "mock")).strip() or "mock"
@@ -415,8 +437,8 @@ def run_from_yaml(config_path: str) -> int:
         if max_drop < 0:
             raise ValueError("regression.max_drop must be greater than or equal to 0")
 
-        delta = outcome.accuracy - baseline_outcome.accuracy
-        regression_passed = delta >= -max_drop
+        regression_delta = outcome.accuracy - baseline_outcome.accuracy
+        regression_passed = regression_delta >= -max_drop
 
         _print_regression_summary(
             current=outcome,
@@ -429,6 +451,29 @@ def run_from_yaml(config_path: str) -> int:
         if not regression_passed:
             exit_code = 1
 
+    history_path = _append_run_history(
+        {
+            "kind": "run",
+            "timestamp": time.time(),
+            "evaluation_name": outcome.evaluation_name,
+            "evaluation_id": outcome.evaluation_id,
+            "run_id": outcome.run_id,
+            "provider": outcome.provider,
+            "model": outcome.model,
+            "accuracy": outcome.accuracy,
+            "latency_ms": outcome.latency_ms,
+            "gate_threshold": outcome.gate_threshold,
+            "gate_passed": outcome.gate_passed,
+            "baseline_provider": baseline_provider,
+            "baseline_model": baseline_model,
+            "baseline_accuracy": (
+                baseline_outcome.accuracy if baseline_outcome is not None else None
+            ),
+            "regression_delta": regression_delta,
+            "regression_passed": regression_passed,
+        }
+    )
+
     print()
     print("Run created successfully")
     print(f"Run ID: {outcome.run_id}")
@@ -437,6 +482,8 @@ def run_from_yaml(config_path: str) -> int:
     print()
     if outcome.report_path is not None:
         print(f"Report written to: {outcome.report_path}")
+
+    print(f"History written to: {history_path}")
 
     return exit_code
 
@@ -508,6 +555,25 @@ def compare_from_yaml(
 
     print()
     print(f"Report written to: {report_path}")
+
+    history_path = _append_run_history(
+        {
+            "kind": "comparison",
+            "timestamp": time.time(),
+            "evaluation_name": inputs.name,
+            "evaluation_id": left_outcome.evaluation_id,
+            "dataset_version_id": inputs.dataset_version_id,
+            "prompt_version_id": inputs.prompt_version_id,
+            "left_name": f"{left_outcome.provider}:{left_outcome.model}",
+            "right_name": f"{right_outcome.provider}:{right_outcome.model}",
+            "left_accuracy": left_outcome.accuracy,
+            "right_accuracy": right_outcome.accuracy,
+            "winner": comparison.winner,
+            "margin": comparison.margin,
+        }
+    )
+
+    print(f"History written to: {history_path}")
 
     return 0
 
