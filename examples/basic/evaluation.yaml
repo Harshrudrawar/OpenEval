@@ -17,7 +17,8 @@ gate:
   accuracy: 0.80
 
 baseline:
-  source: history
+  provider: mock
+  model: baseline
 
 regression:
   max_drop: 0.05
