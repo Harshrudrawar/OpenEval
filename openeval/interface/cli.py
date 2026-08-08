@@ -34,6 +34,7 @@ class EvaluationInputs:
     metric_name: str
     target: dict[str, Any]
     gate_config: dict[str, Any]
+    baseline: dict[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -132,10 +133,13 @@ def print_evaluation_summary(evaluation: Any) -> None:
 
 def _default_model_for_provider(provider: str) -> str:
     provider_name = provider.strip().lower()
+
     if provider_name == "openai":
         return "gpt-4o"
+
     if provider_name == "ollama":
         return "llama3"
+
     return "unknown"
 
 
@@ -148,6 +152,7 @@ def _load_inputs(config_path: str) -> EvaluationInputs:
     target = config.get("target", {})
     metrics = config.get("metrics", [])
     gate_config = config.get("gate", {})
+    baseline = config.get("baseline")
 
     if not isinstance(dataset_config, dict):
         raise ValueError("dataset must be a YAML mapping/object")
@@ -166,6 +171,9 @@ def _load_inputs(config_path: str) -> EvaluationInputs:
 
     if not isinstance(gate_config, dict):
         raise ValueError("gate must be a YAML mapping/object")
+
+    if baseline is not None and not isinstance(baseline, dict):
+        raise ValueError("baseline must be a YAML mapping/object")
 
     dataset_path = dataset_config.get("path", "")
     if not isinstance(dataset_path, str) or not dataset_path.strip():
@@ -194,6 +202,7 @@ def _load_inputs(config_path: str) -> EvaluationInputs:
         metric_name=metric_name.strip(),
         target=target,
         gate_config=gate_config,
+        baseline=baseline,
     )
 
 
@@ -271,6 +280,7 @@ def _execute_single_run(
     model = str(target.get("model", "unknown")).strip() or "unknown"
 
     report_path: Path | None = None
+
     if write_report:
         report_path = write_run_report(
             "reports",
@@ -305,8 +315,33 @@ def _execute_single_run(
     )
 
 
+def _print_regression_summary(
+    *,
+    current: RunOutcome,
+    baseline: RunOutcome,
+) -> None:
+    delta = current.accuracy - baseline.accuracy
+
+    if delta > 0:
+        status = "IMPROVED"
+    elif delta < 0:
+        status = "REGRESSED"
+    else:
+        status = "UNCHANGED"
+
+    print()
+    print("Baseline Regression Check")
+    print(
+        f"Baseline ({baseline.provider}:{baseline.model}): " f"{baseline.accuracy:.2f}"
+    )
+    print(f"Current  ({current.provider}:{current.model}): " f"{current.accuracy:.2f}")
+    print(f"Delta: {delta:+.2f}")
+    print(f"Result: {status}")
+
+
 def run_from_yaml(config_path: str) -> int:
     inputs = _load_inputs(config_path)
+
     outcome = _execute_single_run(
         inputs,
         target=inputs.target,
@@ -343,6 +378,29 @@ def run_from_yaml(config_path: str) -> int:
         )
         exit_code = 0 if outcome.gate_passed else 1
 
+    if inputs.baseline is not None:
+        baseline_provider = (
+            str(inputs.baseline.get("provider", "mock")).strip() or "mock"
+        )
+        baseline_model = str(inputs.baseline.get("model", "")).strip()
+
+        baseline_target = _resolve_target(
+            inputs.target,
+            provider=baseline_provider,
+            model=baseline_model,
+        )
+
+        baseline_outcome = _execute_single_run(
+            inputs,
+            target=baseline_target,
+            write_report=False,
+        )
+
+        _print_regression_summary(
+            current=outcome,
+            baseline=baseline_outcome,
+        )
+
     print()
     print("Run created successfully")
     print(f"Run ID: {outcome.run_id}")
@@ -370,6 +428,7 @@ def compare_from_yaml(
         provider=left_provider,
         model=left_model,
     )
+
     right_target = _resolve_target(
         inputs.target,
         provider=right_provider,
@@ -381,6 +440,7 @@ def compare_from_yaml(
         target=left_target,
         write_report=False,
     )
+
     right_outcome = _execute_single_run(
         inputs,
         target=right_target,

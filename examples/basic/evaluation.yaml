@@ -11,7 +11,11 @@ target:
   provider: mock
 
 metrics:
-   - contains
+  - contains
 
 gate:
   accuracy: 0.80
+
+baseline:
+  provider: mock
+  model: baseline
