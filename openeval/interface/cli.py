@@ -22,7 +22,11 @@ from openeval.infrastructure import (
 )
 from openeval.infrastructure.executor_factory import build_target_executor
 from openeval.infrastructure.metric_plugins import build_metric_plugin
-from openeval.interface.report import write_comparison_report, write_run_report
+from openeval.interface.report import (
+    append_run_history,
+    write_comparison_report,
+    write_run_report,
+)
 from openeval.interface.yaml_loader import load_yaml
 
 RUN_HISTORY_PATH = Path("reports") / "run-history.jsonl"
@@ -117,6 +121,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Right model name",
     )
 
+    history_parser = subparsers.add_parser(
+        "history",
+        help="Show saved run and comparison history",
+    )
+    history_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Number of history entries to show",
+    )
+
     return parser
 
 
@@ -147,17 +162,81 @@ def _default_model_for_provider(provider: str) -> str:
     return "unknown"
 
 
-def _append_run_history(
-    record: dict[str, Any],
-    history_path: str | Path = RUN_HISTORY_PATH,
-) -> Path:
-    path = Path(history_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _load_history_entries(
+    history_path: Path = RUN_HISTORY_PATH,
+) -> list[dict[str, Any]]:
+    if not history_path.exists():
+        return []
 
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    entries: list[dict[str, Any]] = []
 
-    return path
+    for line in history_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+
+        if not line:
+            continue
+
+        entries.append(json.loads(line))
+
+    return entries
+
+
+def _format_tri_state(value: Any) -> str:
+    if value is True:
+        return "PASSED"
+
+    if value is False:
+        return "FAILED"
+
+    return "N/A"
+
+
+def history_from_jsonl(limit: int = 20) -> int:
+    if limit <= 0:
+        raise ValueError("history limit must be greater than 0")
+
+    entries = _load_history_entries()
+
+    if not entries:
+        print("No history yet.")
+        return 0
+
+    print("OpenEval History")
+    print()
+
+    for entry in reversed(entries[-limit:]):
+        kind = entry.get("kind", "unknown")
+
+        if kind == "run":
+            gate_status = _format_tri_state(entry.get("gate_passed"))
+            regression_status = _format_tri_state(entry.get("regression_passed"))
+
+            print("RUN")
+            print(f"Evaluation: {entry.get('evaluation_name', '')}")
+            print(f"Provider: {entry.get('provider', '')}")
+            print(f"Model: {entry.get('model', '')}")
+            print(f"Accuracy: {float(entry.get('accuracy', 0.0)):.2f}")
+            print(f"Gate: {gate_status}")
+            print(f"Regression: {regression_status}")
+            print()
+
+            continue
+
+        if kind == "comparison":
+            print("COMPARISON")
+            print(f"Left: {entry.get('left_name', '')}")
+            print(f"Right: {entry.get('right_name', '')}")
+            print(f"Winner: {entry.get('winner', '')}")
+            print(f"Margin: {float(entry.get('margin', 0.0)):.2f}")
+            print()
+
+            continue
+
+        print("UNKNOWN")
+        print(entry)
+        print()
+
+    return 0
 
 
 def _load_inputs(config_path: str) -> EvaluationInputs:
@@ -242,10 +321,12 @@ def _resolve_target(
     resolved_target["provider"] = provider_name
 
     model_name = model.strip()
+
     if not model_name:
         model_name = _default_model_for_provider(provider_name)
 
     resolved_target["model"] = model_name
+
     return resolved_target
 
 
@@ -269,6 +350,7 @@ def _execute_single_run(
 
     dataset_loader = CsvDatasetLoader()
     load_cases_use_case = LoadCasesFromDatasetUseCase(dataset_loader)
+
     cases = load_cases_use_case.execute(
         dataset_path=inputs.dataset_path,
         evaluation_definition_id=evaluation.id,
@@ -280,11 +362,19 @@ def _execute_single_run(
 
     target_executor = build_target_executor(target)
     execute_cases_use_case = ExecuteCasesUseCase(target_executor)
-    case_results = execute_cases_use_case.execute(cases, run.id)
+
+    case_results = execute_cases_use_case.execute(
+        cases,
+        run.id,
+    )
 
     metric_plugin = build_metric_plugin(inputs.metric_name)
     score_use_case = EvaluateCaseResultsUseCase(metric_plugin)
-    scores = score_use_case.execute(case_results, case_results)
+
+    scores = score_use_case.execute(
+        case_results,
+        case_results,
+    )
 
     accuracy = sum(score.value for score in scores) / len(scores) if scores else 0.0
     latency_ms = (time.perf_counter() - started_at) * 1000
@@ -451,7 +541,7 @@ def run_from_yaml(config_path: str) -> int:
         if not regression_passed:
             exit_code = 1
 
-    history_path = _append_run_history(
+    history_path = append_run_history(
         {
             "kind": "run",
             "timestamp": time.time(),
@@ -480,6 +570,7 @@ def run_from_yaml(config_path: str) -> int:
     print("Run Status: created")
 
     print()
+
     if outcome.report_path is not None:
         print(f"Report written to: {outcome.report_path}")
 
@@ -534,8 +625,8 @@ def compare_from_yaml(
     print(f"Dataset Version: {inputs.dataset_version_id}")
     print(f"Prompt Version: {inputs.prompt_version_id}")
     print()
-    print(f"Left  ({comparison.left_name}): {comparison.left_accuracy:.2f}")
-    print(f"Right ({comparison.right_name}): {comparison.right_accuracy:.2f}")
+    print(f"Left  ({comparison.left_name}): " f"{comparison.left_accuracy:.2f}")
+    print(f"Right ({comparison.right_name}): " f"{comparison.right_accuracy:.2f}")
     print(f"Winner: {comparison.winner}")
     print(f"Margin: {comparison.margin:.2f}")
 
@@ -545,8 +636,8 @@ def compare_from_yaml(
         evaluation_id=left_outcome.evaluation_id,
         dataset_version=inputs.dataset_version_id,
         prompt_version=inputs.prompt_version_id,
-        left_name=f"{left_outcome.provider}:{left_outcome.model}",
-        right_name=f"{right_outcome.provider}:{right_outcome.model}",
+        left_name=(f"{left_outcome.provider}:{left_outcome.model}"),
+        right_name=(f"{right_outcome.provider}:{right_outcome.model}"),
         left_accuracy=left_outcome.accuracy,
         right_accuracy=right_outcome.accuracy,
         winner=comparison.winner,
@@ -556,7 +647,7 @@ def compare_from_yaml(
     print()
     print(f"Report written to: {report_path}")
 
-    history_path = _append_run_history(
+    history_path = append_run_history(
         {
             "kind": "comparison",
             "timestamp": time.time(),
@@ -564,8 +655,8 @@ def compare_from_yaml(
             "evaluation_id": left_outcome.evaluation_id,
             "dataset_version_id": inputs.dataset_version_id,
             "prompt_version_id": inputs.prompt_version_id,
-            "left_name": f"{left_outcome.provider}:{left_outcome.model}",
-            "right_name": f"{right_outcome.provider}:{right_outcome.model}",
+            "left_name": (f"{left_outcome.provider}:{left_outcome.model}"),
+            "right_name": (f"{right_outcome.provider}:{right_outcome.model}"),
             "left_accuracy": left_outcome.accuracy,
             "right_accuracy": right_outcome.accuracy,
             "winner": comparison.winner,
@@ -607,6 +698,9 @@ def main() -> int:
             left_model=args.left_model,
             right_model=args.right_model,
         )
+
+    if args.command == "history":
+        return history_from_jsonl(args.limit)
 
     return 1
 
