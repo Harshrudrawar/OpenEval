@@ -4,7 +4,7 @@
 
 ### Open-Source AI Evaluation & Quality Platform for LLM Applications
 
-**Evaluate models • Compare providers • Generate reports • Enforce quality gates**
+**Evaluate models • Compare providers • Judge responses • Detect regressions • Enforce AI quality**
 
 <br>
 
@@ -15,7 +15,7 @@
 
 <br>
 
-*Building reproducible, comparable, and continuously evaluated AI systems.*
+**Building reproducible, comparable, and continuously evaluated AI systems.**
 
 </div>
 
@@ -27,13 +27,24 @@ Traditional software engineering has:
 
 **Unit Tests → Integration Tests → CI/CD → Quality Gates**
 
-AI applications need the same discipline.
+AI applications need the same engineering discipline.
 
-OpenEval provides a structured evaluation workflow for LLM applications so developers can measure model quality, compare providers, generate evaluation reports, and enforce minimum quality requirements before changes move forward.
+LLM systems are probabilistic. Prompt changes, model upgrades, provider changes, and application updates can improve one behavior while silently degrading another.
+
+OpenEval provides a structured evaluation workflow for LLM applications so developers can:
+
+- run reproducible evaluations
+- score outputs with multiple metrics
+- use LLMs as evaluation judges
+- compare providers and models
+- enforce minimum quality thresholds
+- detect regressions against previous runs
+- generate evaluation reports
+- integrate AI quality checks directly into CI
 
 Instead of asking:
 
-> *"Does this model seem better?"*
+> **"Does this model seem better?"**
 
 OpenEval moves toward answering:
 
@@ -50,21 +61,28 @@ OpenEval moves toward answering:
 | Automatic case generation | ✅ |
 | Mock execution | ✅ |
 | Local Ollama execution | ✅ |
-| OpenAI provider integration | ✅ |
-| Configurable evaluation metrics | ✅ |
+| Provider-based execution architecture | ✅ |
 | Exact-match accuracy | ✅ |
 | Short-answer containment scoring | ✅ |
+| **Multi-metric evaluation** | ✅ |
+| **LLM-as-a-Judge with Ollama** | ✅ |
+| **Overall multi-metric scoring** | ✅ |
 | Provider/model comparison | ✅ |
 | Latency tracking | ✅ |
 | Quality gates | ✅ |
+| **Historical baselines** | ✅ |
+| **Regression detection** | ✅ |
+| **Run & comparison history** | ✅ |
 | CI-compatible exit codes | ✅ |
-| HTML run reports | ✅ |
+| Rich HTML run reports | ✅ |
 | HTML comparison reports | ✅ |
 | GitHub Actions CI | ✅ |
+| **Reusable OpenEval GitHub Action** | ✅ |
+| Pull-request quality checks | ✅ |
 
 ---
 
-## ⚡ Quick Start
+# ⚡ Quick Start
 
 ### 1. Clone OpenEval
 
@@ -85,31 +103,40 @@ pip install -e .
 python -m openeval.interface.cli run examples/basic/evaluation.yaml
 ```
 
-Example:
+Example output:
 
 ```text
 ✔ Evaluation created successfully
 
+ID: <evaluation-id>
+Name: Demo Evaluation
+Dataset Version: dataset-v1
+Prompt Version: prompt-v1
+Metrics: 1
+
 Loaded 3 cases
 Created 3 case results
+Overall Score: 1.00
 
-Accuracy: 1.00
+Metric Scores:
+  contains: 1.00
+
 Latency: 3 ms
 Quality Gate: PASSED (threshold: 0.80)
 
 Run created successfully
-
-Run ID: <generated-run-id>
+Run ID: <run-id>
 Run Status: created
 
 Report written to: reports/<run-id>.html
+History written to: reports/run-history.jsonl
 ```
 
-OpenEval also generates an HTML report for the run.
+Every run can produce a standalone HTML evaluation report and a persistent history record.
 
 ---
 
-## ⚙️ Evaluation Configuration
+# ⚙️ Evaluation Configuration
 
 OpenEval evaluations are defined using YAML.
 
@@ -133,7 +160,7 @@ gate:
   accuracy: 0.80
 ```
 
-The configuration describes:
+The configuration defines the evaluation contract:
 
 ```text
 Dataset
@@ -142,22 +169,225 @@ Prompt Version
    +
 Target Provider
    +
-Evaluation Metric
+Evaluation Metrics
    +
 Quality Gate
 ```
 
+This makes evaluations reproducible and version-aware instead of relying on ad-hoc manual testing.
+
 ---
 
-## 🔌 Execution Providers
+# 🧠 Multi-Metric Evaluation
 
-OpenEval separates evaluation logic from model execution.
+Real AI quality rarely fits into a single metric.
+
+OpenEval can evaluate the same model output using multiple scoring strategies:
+
+```yaml
+metrics:
+  - contains
+  - llm_judge
+
+judge:
+  provider: ollama
+  model: llama3
+```
+
+The target is executed once.
+
+The resulting outputs are then evaluated independently by every configured metric:
+
+```text
+                     Target
+                       │
+                       ▼
+                 Execute Cases
+                       │
+                       ▼
+                  Case Results
+                       │
+             ┌─────────┴─────────┐
+             │                   │
+             ▼                   ▼
+          contains           llm_judge
+             │                   │
+             ▼                   ▼
+            1.00                0.92
+             │                   │
+             └─────────┬─────────┘
+                       │
+                       ▼
+                  Overall Score
+                       │
+                       ▼
+                  Quality Gate
+```
+
+For the current multi-metric implementation:
+
+```text
+Overall Score = average of configured metric scores
+```
+
+Example:
+
+```text
+Metric Scores:
+  contains: 1.00
+  llm_judge: 0.92
+
+Overall Score: 0.96
+```
+
+This allows deterministic and semantic evaluation strategies to work together.
+
+---
+
+# 🧠 LLM-as-a-Judge
+
+Exact matching is useful, but many valid LLM answers are semantically correct without matching the expected text exactly.
+
+OpenEval supports an **LLM-as-a-Judge** metric using a local Ollama model.
+
+Example:
+
+```text
+Expected:
+Paris is the capital of France.
+
+Actual:
+France's capital city is Paris.
+```
+
+An exact-match metric may reject the answer.
+
+An LLM judge can evaluate whether the response is semantically correct.
+
+Configure it with:
+
+```yaml
+metrics:
+  - llm_judge
+
+judge:
+  provider: ollama
+  model: llama3
+```
+
+The evaluation flow becomes:
+
+```text
+Expected Output
+      +
+Actual Output
+      │
+      ▼
+LLM Judge Metric
+      │
+      ▼
+Ollama / llama3
+      │
+      ▼
+Structured Verdict
+      │
+      ▼
+0.0 / 1.0 Score
+```
+
+The judge is intentionally separate from the target being evaluated.
+
+For example:
+
+```yaml
+target:
+  provider: mock
+
+metrics:
+  - llm_judge
+
+judge:
+  provider: ollama
+  model: llama3
+```
+
+Here the **mock target** generates the result while **Ollama acts as the evaluator**.
+
+This separation makes it possible to evaluate one model using another model as the judge.
+
+---
+
+# 📏 Evaluation Metrics
+
+OpenEval currently provides three metric strategies.
+
+### Exact-Match Accuracy
+
+Useful when expected and generated values should match exactly.
+
+```text
+Expected: Paris
+Actual:   Paris
+
+Score: 1.0
+```
+
+Matching is normalized for casing and surrounding whitespace.
+
+Configure with:
+
+```yaml
+metrics:
+  - accuracy
+```
+
+### Short-Answer Containment
+
+Useful when an LLM produces additional natural language around a correct short answer.
+
+```text
+Expected:
+Paris
+
+Actual:
+"The capital of France is Paris."
+
+Score: 1.0
+```
+
+Configure with:
+
+```yaml
+metrics:
+  - contains
+```
+
+### LLM Judge
+
+Useful when semantic correctness matters more than exact wording.
+
+```yaml
+metrics:
+  - llm_judge
+
+judge:
+  provider: ollama
+  model: llama3
+```
+
+The metric layer is plugin-based, allowing new evaluation strategies to be introduced without rewriting the execution pipeline.
+
+---
+
+# 🔌 Execution Providers
+
+OpenEval separates model execution from evaluation logic.
 
 | Provider | Status | Use Case |
 | --- | :---: | --- |
 | **Mock** | ✅ | Deterministic tests and CI |
-| **Ollama** | ✅ | Free local LLM evaluation |
-| **OpenAI** | 🟡 | Cloud model evaluation |
+| **Ollama** | ✅ | Local LLM execution |
+| **OpenAI** | 🟡 | Provider architecture / cloud execution |
 | **Anthropic** | 🔜 | Planned |
 | **Gemini** | 🔜 | Planned |
 
@@ -169,64 +399,19 @@ target:
   model: llama3
 ```
 
+Ollama is especially useful for local experimentation without requiring cloud API usage.
+
 ### OpenAI
 
-```yaml
-target:
-  provider: openai
-  model: gpt-4o
-```
+The provider architecture is designed to support cloud model execution through provider-specific executors.
 
-OpenAI execution requires API access through the `OPENAI_API_KEY` environment variable.
-
-Secrets are never stored inside the evaluation YAML.
+Secrets should be supplied through environment variables rather than stored inside evaluation YAML.
 
 ---
 
-## 🧠 Evaluation Metrics
+# 🔀 Compare Models & Providers
 
-OpenEval currently supports deterministic metrics designed for different evaluation scenarios.
-
-### Exact-Match Accuracy
-
-Useful when the expected and generated values should match exactly.
-
-```text
-Expected: Paris
-Actual:   Paris
-
-Score: 1.0
-```
-
-Matching is normalized for casing and surrounding whitespace.
-
-### Short-Answer Containment
-
-Useful when an LLM produces additional natural language around a correct answer.
-
-```text
-Expected: Paris
-
-Actual:
-"The capital of France is Paris."
-
-Score: 1.0
-```
-
-Configure it with:
-
-```yaml
-metrics:
-  - contains
-```
-
-The metric layer is plugin-based so additional evaluation strategies can be introduced without changing the execution pipeline.
-
----
-
-## 🔀 Compare Models & Providers
-
-Run the **same dataset and evaluation configuration** against two providers:
+Run the **same dataset, prompt version, and metric configuration** against two providers:
 
 ```bash
 python -m openeval.interface.cli compare examples/basic/evaluation.yaml \
@@ -234,7 +419,7 @@ python -m openeval.interface.cli compare examples/basic/evaluation.yaml \
   --right-provider mock
 ```
 
-Example output:
+Example:
 
 ```text
 ✔ Comparison completed successfully
@@ -252,13 +437,13 @@ Report written to:
 reports/comparison-<evaluation-id>.html
 ```
 
-This allows different providers or models to be evaluated under the **same dataset and metric conditions**.
+This makes model and provider decisions measurable rather than subjective.
 
 ---
 
-## 🛡️ AI Quality Gates
+# 🛡️ AI Quality Gates
 
-Evaluation should do more than produce a number.
+Evaluation should do more than produce a score.
 
 OpenEval can enforce minimum quality requirements:
 
@@ -267,11 +452,12 @@ gate:
   accuracy: 0.80
 ```
 
+With multi-metric evaluation, the gate currently applies to the overall evaluation score.
+
 ### Passing evaluation
 
 ```text
-Accuracy: 0.93
-
+Overall Score: 0.93
 Quality Gate: PASSED
 ```
 
@@ -284,8 +470,7 @@ exit code 0
 ### Failing evaluation
 
 ```text
-Accuracy: 0.72
-
+Overall Score: 0.72
 Quality Gate: FAILED
 ```
 
@@ -295,56 +480,206 @@ Process result:
 exit code 1
 ```
 
-That enables OpenEval to participate directly in CI/CD:
+That means OpenEval can participate directly in CI/CD:
 
 ```text
-                AI Application Change
-                         │
-                         ▼
-                    OpenEval
-                         │
-                         ▼
-                 Run Evaluation
-                         │
-                         ▼
-                  Quality Gate
-                    /       \
-                   /         \
-                PASS         FAIL
-                 │             │
-                 ▼             ▼
-            Continue CI    Exit Code 1
-                               │
-                               ▼
-                          Block Pipeline
+                 AI Application Change
+                          │
+                          ▼
+                       OpenEval
+                          │
+                          ▼
+                    Run Evaluation
+                          │
+                          ▼
+                     Quality Gate
+                      /         \
+                     /           \
+                  PASS           FAIL
+                   │               │
+                   ▼               ▼
+              Continue CI       Exit 1
+                                   │
+                                   ▼
+                            Block Pipeline
 ```
 
 ---
 
-## 📊 HTML Reports
+# 📉 Regression Detection
 
-Every evaluation can generate a standalone HTML report containing:
+A model can still pass a minimum quality threshold while performing worse than a previous version.
 
-- Evaluation metadata
-- Provider and model
-- Dataset version
-- Prompt version
-- Number of evaluation cases
-- Metric score
-- Latency
-- Quality gate status
-- Run information
+OpenEval supports regression checks to detect that situation.
+
+Example:
+
+```yaml
+regression:
+  max_drop: 0.05
+```
+
+An explicit baseline can be configured:
+
+```yaml
+baseline:
+  provider: mock
+  model: baseline
+```
+
+Example output:
+
+```text
+Baseline Regression Check
+
+Baseline (mock:baseline): 1.00
+Current  (ollama:llama3): 0.67
+Delta: -0.33
+Result: REGRESSED
+Allowed Drop: 0.05
+Regression Gate: FAILED
+```
+
+This provides a second layer of protection:
+
+```text
+Current Evaluation
+        │
+        ├──────────────► Quality Threshold
+        │
+        ▼
+Historical / Explicit Baseline
+        │
+        ▼
+Regression Delta
+        │
+        ▼
+Regression Gate
+```
+
+---
+
+# 🕘 Historical Baselines
+
+OpenEval can also use previous successful runs as baselines.
+
+```yaml
+baseline:
+  source: history
+
+regression:
+  max_drop: 0.05
+```
+
+OpenEval searches compatible historical runs using evaluation context such as:
+
+- evaluation name
+- dataset version
+- prompt version
+- metric configuration
+- provider
+- model
+
+Example:
+
+```text
+Historical Baseline Check
+
+Baseline (mock:unknown): 1.00
+Current  (mock:unknown): 1.00
+Delta: +0.00
+Result: UNCHANGED
+Allowed Drop: 0.05
+Regression Gate: PASSED
+```
+
+This allows regression detection to evolve with the evaluation history rather than requiring a hard-coded baseline forever.
+
+---
+
+# 🗂️ Evaluation History
+
+OpenEval stores run and comparison history in:
+
+```text
+reports/run-history.jsonl
+```
+
+View history with:
+
+```bash
+python -m openeval.interface.cli history
+```
+
+Filter to runs:
+
+```bash
+python -m openeval.interface.cli history --kind run
+```
+
+Filter to comparisons:
+
+```bash
+python -m openeval.interface.cli history --kind comparison
+```
+
+Example:
+
+```text
+OpenEval History
+
+RUN
+Evaluation: Demo Evaluation
+Provider: mock
+Model: unknown
+Metrics: contains
+Accuracy: 1.00
+Gate: PASSED
+Regression: PASSED
+```
+
+History records preserve evaluation context so previous runs can be inspected and reused for regression analysis.
+
+---
+
+# 📊 Rich HTML Reports
+
+OpenEval generates standalone HTML reports for evaluation runs.
+
+Run reports include:
+
+- overall score
+- individual metric scores
+- target provider and model
+- judge provider and model when applicable
+- dataset version
+- prompt version
+- case count
+- latency
+- quality gate status
+- evaluation/run identifiers
+
+For multi-metric evaluations, the report shows each metric independently:
+
+```text
+Metric Scores
+
+contains       1.00
+llm_judge      0.92
+
+Overall        0.96
+```
 
 Comparison runs generate dedicated reports containing:
 
-- Both providers/models
-- Individual scores
-- Winning configuration
-- Score margin
-- Dataset version
-- Prompt version
+- both providers/models
+- individual overall scores
+- winning configuration
+- score margin
+- dataset version
+- prompt version
 
-Reports are generated locally under:
+Reports are generated under:
 
 ```text
 reports/
@@ -354,109 +689,11 @@ and are intentionally excluded from Git tracking.
 
 ---
 
-## 🔄 Evaluation Pipeline
+# ⚙️ GitHub Actions
 
-```text
-                     evaluation.yaml
-                           │
-                           ▼
-                  Load Configuration
-                           │
-                           ▼
-                      Load Dataset
-                           │
-                           ▼
-                    Generate Cases
-                           │
-                           ▼
-                  Create Evaluation
-                           │
-                           ▼
-                      Create Run
-                           │
-                           ▼
-                   Execute Provider
-                           │
-                           ▼
-                 Generate Case Results
-                           │
-                           ▼
-                    Evaluate Metric
-                           │
-                           ▼
-                     Quality Gate
-                       /       \
-                      /         \
-                   PASS         FAIL
-                     │            │
-                     ▼            ▼
-              Generate Report   Exit 1
-```
+OpenEval can run directly inside CI.
 
----
-
-## 🏗️ Architecture
-
-OpenEval follows **Clean Architecture**, keeping evaluation rules independent from providers and infrastructure.
-
-```text
-                    Interface
-               CLI • Reports • CI
-                        │
-                        ▼
-                   Application
-                    Use Cases
-                        │
-                        ▼
-                      Domain
-                Evaluation Rules
-                        │
-                        ▼
-                 Infrastructure
-             Providers • Metrics • Storage
-```
-
-Provider execution is interchangeable:
-
-```text
-                   TargetExecutor
-                         │
-             ┌───────────┼───────────┐
-             ▼           ▼           ▼
-           Mock        Ollama      OpenAI
-```
-
-This allows new providers to be added without rewriting the evaluation pipeline.
-
----
-
-## 📂 Project Structure
-
-```text
-OpenEval/
-│
-├── .github/
-│   └── workflows/
-│
-├── docs/
-├── examples/
-├── tests/
-│
-├── openeval/
-│   ├── application/
-│   ├── domain/
-│   ├── infrastructure/
-│   └── interface/
-│
-├── pyproject.toml
-└── README.md
-```
-
----
-
-## 🧪 Engineering Quality
-
-OpenEval validates every change through:
+The repository itself runs:
 
 ```text
 Ruff
@@ -471,75 +708,279 @@ MyPy
 Pytest
   │
   ▼
-OpenEval Evaluation
+OpenEval Quality Check
+  │
+  ▼
+Upload Evaluation Reports
 ```
 
-The repository uses:
+This means OpenEval **dogfoods its own evaluation system** as part of repository CI.
+
+---
+
+# 🧩 Reusable OpenEval GitHub Action
+
+OpenEval can also be consumed from another GitHub repository.
+
+Example:
+
+```yaml
+- uses: Harshrudrawar/OpenEval/.github/actions/openeval@v1
+  with:
+    config: examples/basic/evaluation.yaml
+```
+
+A consuming repository can therefore make AI evaluation part of its normal software delivery workflow.
+
+Conceptually:
+
+```text
+Pull Request
+     │
+     ▼
+GitHub Actions
+     │
+     ▼
+OpenEval
+     │
+     ▼
+Evaluation
+     │
+     ▼
+Quality Gate
+   /       \
+ PASS      FAIL
+  │          │
+  ▼          ▼
+Merge      Block
+```
+
+This is a core part of OpenEval's long-term direction:
+
+> **Treat AI quality checks like software quality checks.**
+
+---
+
+# 🔄 Evaluation Pipeline
+
+```text
+                    evaluation.yaml
+                          │
+                          ▼
+                  Load Configuration
+                          │
+                          ▼
+                     Load Dataset
+                          │
+                          ▼
+                    Generate Cases
+                          │
+                          ▼
+                  Create Evaluation
+                          │
+                          ▼
+                      Create Run
+                          │
+                          ▼
+                   Execute Provider
+                          │
+                          ▼
+                 Generate Case Results
+                          │
+                          ▼
+                ┌─────────┴─────────┐
+                │                   │
+                ▼                   ▼
+          Metric Plugin        Metric Plugin
+                │                   │
+                └─────────┬─────────┘
+                          │
+                          ▼
+                    Metric Scores
+                          │
+                          ▼
+                    Overall Score
+                          │
+                          ▼
+                     Quality Gate
+                          │
+                          ▼
+                  Regression Check
+                          │
+                          ▼
+                Report + Run History
+```
+
+The target executes once and the resulting case outputs can be evaluated by multiple metric plugins.
+
+---
+
+# 🏗️ Architecture
+
+OpenEval follows **Clean Architecture**, keeping evaluation rules independent from provider infrastructure.
+
+```text
+                     Interface
+              CLI • Reports • CI
+                         │
+                         ▼
+                    Application
+                     Use Cases
+                         │
+                         ▼
+                       Domain
+                 Evaluation Rules
+                         │
+                         ▼
+                  Infrastructure
+            Providers • Metrics • Storage
+```
+
+Dependencies point inward.
+
+Provider execution is interchangeable:
+
+```text
+                    TargetExecutor
+                         │
+             ┌───────────┼───────────┐
+             ▼           ▼           ▼
+           Mock        Ollama      OpenAI
+```
+
+Metric evaluation follows the same plugin-oriented approach:
+
+```text
+                     MetricPlugin
+                         │
+             ┌───────────┼──────────────┐
+             ▼           ▼              ▼
+         accuracy     contains       llm_judge
+```
+
+This allows providers and evaluation strategies to evolve independently.
+
+---
+
+# 📂 Project Structure
+
+```text
+OpenEval/
+│
+├── .github/
+│   ├── actions/
+│   │   └── openeval/
+│   └── workflows/
+│
+├── docs/
+├── examples/
+│   ├── basic/
+│   └── llm-judge/
+│
+├── tests/
+│
+├── openeval/
+│   ├── application/
+│   ├── domain/
+│   ├── infrastructure/
+│   └── interface/
+│
+├── pyproject.toml
+└── README.md
+```
+
+---
+
+# 🧪 Engineering Quality
+
+Every OpenEval change is validated through:
+
+```bash
+black --check .
+ruff check .
+mypy openeval
+pytest
+```
+
+The project uses:
 
 - **Ruff** — linting
 - **Black** — formatting
-- **MyPy** — strict static type checking
+- **MyPy** — static type checking
 - **Pytest** — automated testing
 - **GitHub Actions** — continuous integration
+- **OpenEval itself** — AI quality validation
 
-OpenEval also executes its own example evaluation inside CI.
+The repository's own CI executes an OpenEval evaluation and uploads generated reports as workflow artifacts.
 
 ---
 
-## 🛣️ Roadmap
+# 🛣️ Roadmap
 
-### ✅ Built
+## ✅ Built
 
 - YAML evaluation configuration
 - CSV dataset ingestion
-- Case generation
-- Evaluation execution pipeline
-- Run management
+- Automatic case generation
+- Evaluation and run management
 - Mock execution
-- Ollama integration
-- OpenAI provider integration
-- Provider routing
-- Configurable metrics
-- Accuracy scoring
+- Ollama execution
+- Provider routing architecture
+- Plugin-based metrics
+- Exact-match accuracy
 - Short-answer containment scoring
+- **Multi-metric evaluation**
+- **Overall metric aggregation**
+- **Ollama LLM-as-a-Judge**
+- Provider/model comparison
 - Latency measurement
 - Quality gates
 - CI-compatible exit codes
-- HTML run reports
-- Provider/model comparison
+- **Explicit baselines**
+- **Historical baselines**
+- **Regression detection**
+- **Persistent run history**
+- **Comparison history**
+- Rich HTML run reports
 - HTML comparison reports
-- GitHub Actions integration
+- GitHub Actions CI
+- **Reusable OpenEval GitHub Action**
+- **Pull-request quality checks**
 - Automated quality-gate testing
 
-### 🚧 Next
+## 🚧 Next
 
-- More robust LLM evaluation metrics
+- Per-metric quality gates
+- Weighted metric scoring
+- Richer LLM judge verdicts and reasoning
 - Better provider failure handling
-- Baseline comparison
-- Regression detection
-- Improved evaluation reports
+- Cost and token tracking
+- Improved comparison reports
 
-### 🔮 Future
+## 🔮 Future
 
-- LLM-as-a-Judge
-- Cost tracking
-- Experiment history
+- Additional LLM judge providers
 - Anthropic integration
 - Gemini integration
-- Dedicated OpenEval GitHub Action
-- Pull-request quality checks
 - Additional dataset formats
+- Benchmark suites
+- Experiment dashboards
 - Extended metric plugin ecosystem
+- Remote evaluation history/storage
 
 ---
 
-## 🎯 Vision
+# 🎯 Vision
 
 OpenEval aims to become:
 
 > ### **GitHub Actions for AI Quality.**
 
-The goal is to make AI quality **measurable, reproducible, comparable, versioned, and enforceable** throughout the software development lifecycle.
+The goal is to make AI quality:
+
+**measurable • reproducible • comparable • versioned • enforceable**
+
+throughout the software development lifecycle.
 
 ```text
 Developer changes model / prompt / application
@@ -552,16 +993,19 @@ Developer changes model / prompt / application
                     │
           ┌─────────┼─────────┐
           ▼         ▼         ▼
-       Dataset    Model     Metrics
+       Dataset    Target    Metrics
           └─────────┼─────────┘
                     ▼
-              Evaluation
+                Evaluation
                     │
                     ▼
-               Comparison
+             Multi-Metric Score
                     │
                     ▼
               Quality Gate
+                    │
+                    ▼
+            Regression Check
                 /       \
              PASS       FAIL
                │          │
@@ -573,7 +1017,7 @@ AI quality should eventually feel as natural to enforce as unit tests.
 
 ---
 
-## 🤝 Contributing
+# 🤝 Contributing
 
 Contributions are welcome.
 
@@ -581,16 +1025,17 @@ OpenEval may be interesting if you work on:
 
 - AI Evaluation
 - AI Reliability
+- Trustworthy AI
 - AI Infrastructure
 - LLM Engineering
 - Developer Tooling
 - Backend Engineering
 
-Feel free to open an issue or submit a pull request.
+Feel free to open an issue, propose a metric, add a provider, improve evaluation infrastructure, or submit a pull request.
 
 ---
 
-## 📜 License
+# 📜 License
 
 OpenEval is licensed under the **Apache License 2.0**.
 

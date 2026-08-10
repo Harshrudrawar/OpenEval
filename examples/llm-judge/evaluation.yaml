@@ -1,0 +1,21 @@
+name: LLM Judge Demo
+
+dataset:
+  version: dataset-v1
+  path: examples/basic/dataset.csv
+
+prompt:
+  version: prompt-v1
+
+target:
+  provider: mock
+
+metrics:
+  - llm_judge
+
+judge:
+  provider: ollama
+  model: llama3
+
+gate:
+  accuracy: 0.80
