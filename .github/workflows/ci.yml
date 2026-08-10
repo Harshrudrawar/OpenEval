@@ -41,8 +41,10 @@ jobs:
       - name: Run Pytest
         run: pytest
 
-      - name: Run OpenEval example
-        run: python -m openeval.interface.cli run examples/basic/evaluation.yaml
+      - name: Run OpenEval quality check
+        uses: ./.github/actions/openeval
+        with:
+          config: examples/basic/evaluation.yaml
 
       - name: Upload OpenEval reports
         if: always()

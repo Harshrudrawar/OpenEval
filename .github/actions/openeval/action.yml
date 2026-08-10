@@ -1,0 +1,15 @@
+name: "OpenEval Quality Check"
+description: "Run OpenEval evaluation quality gates in CI"
+
+inputs:
+  config:
+    description: "Path to the OpenEval evaluation YAML file"
+    required: false
+    default: "examples/basic/evaluation.yaml"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run OpenEval quality check
+      shell: bash
+      run: python -m openeval.interface.cli run "${{ inputs.config }}"
