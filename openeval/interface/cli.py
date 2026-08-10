@@ -238,6 +238,15 @@ def history_from_jsonl(limit: int = 20, kind: str = "all") -> int:
             print(f"Provider: {entry.get('provider', '')}")
             print(f"Model: {entry.get('model', '')}")
             print(f"Metric: {entry.get('metric_name', '')}")
+
+            judge_provider = _history_text(entry, "judge_provider")
+            judge_model = _history_text(entry, "judge_model")
+            if judge_provider is not None or judge_model is not None:
+                print(
+                    f"Judge: {judge_provider or 'unknown'}:"
+                    f"{judge_model or 'unknown'}"
+                )
+
             print(f"Accuracy: {float(entry.get('accuracy', 0.0)):.2f}")
             print(f"Gate: {gate_status}")
             print(f"Regression: {regression_status}")
@@ -366,6 +375,18 @@ def _resolve_target(
     resolved_target["model"] = model_name
 
     return resolved_target
+
+
+def _judge_details(inputs: EvaluationInputs) -> tuple[str | None, str | None]:
+    if inputs.metric_name != "llm_judge":
+        return None, None
+
+    judge_provider = (
+        str(inputs.judge_config.get("provider", "ollama")).strip() or "ollama"
+    )
+    judge_model = str(inputs.judge_config.get("model", "llama3")).strip() or "llama3"
+
+    return judge_provider, judge_model
 
 
 def _find_historical_baseline(
@@ -506,6 +527,7 @@ def _execute_single_run(
 
     provider = str(target.get("provider", "mock")).strip() or "mock"
     model = str(target.get("model", "unknown")).strip() or "unknown"
+    judge_provider, judge_model = _judge_details(inputs)
 
     report_path: Path | None = None
 
@@ -519,6 +541,9 @@ def _execute_single_run(
             prompt_version=inputs.prompt_version_id,
             provider=provider,
             model=model,
+            metric_name=inputs.metric_name,
+            judge_provider=judge_provider,
+            judge_model=judge_model,
             cases_count=len(cases),
             case_results_count=len(case_results),
             accuracy=accuracy,
@@ -728,6 +753,8 @@ def run_from_yaml(config_path: str) -> int:
             "dataset_version_id": inputs.dataset_version_id,
             "prompt_version_id": inputs.prompt_version_id,
             "metric_name": inputs.metric_name,
+            "judge_provider": _judge_details(inputs)[0],
+            "judge_model": _judge_details(inputs)[1],
             "provider": outcome.provider,
             "model": outcome.model,
             "accuracy": outcome.accuracy,
@@ -808,8 +835,8 @@ def compare_from_yaml(
     print(f"Dataset Version: {inputs.dataset_version_id}")
     print(f"Prompt Version: {inputs.prompt_version_id}")
     print()
-    print(f"Left  ({comparison.left_name}): {comparison.left_accuracy:.2f}")
-    print(f"Right ({comparison.right_name}): {comparison.right_accuracy:.2f}")
+    print(f"Left  ({comparison.left_name}): " f"{comparison.left_accuracy:.2f}")
+    print(f"Right ({comparison.right_name}): " f"{comparison.right_accuracy:.2f}")
     print(f"Winner: {comparison.winner}")
     print(f"Margin: {comparison.margin:.2f}")
 
