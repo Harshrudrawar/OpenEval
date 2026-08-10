@@ -41,6 +41,7 @@ class EvaluationInputs:
     metric_name: str
     target: dict[str, Any]
     gate_config: dict[str, Any]
+    judge_config: dict[str, Any]
     baseline: dict[str, Any] | None
     regression_config: dict[str, Any]
 
@@ -277,6 +278,7 @@ def _load_inputs(config_path: str) -> EvaluationInputs:
     target = config.get("target", {})
     metrics = config.get("metrics", [])
     gate_config = config.get("gate", {})
+    judge_config = config.get("judge", {})
     baseline = config.get("baseline")
     regression_config = config.get("regression", {})
 
@@ -297,6 +299,12 @@ def _load_inputs(config_path: str) -> EvaluationInputs:
 
     if not isinstance(gate_config, dict):
         raise ValueError("gate must be a YAML mapping/object")
+
+    if judge_config is None:
+        judge_config = {}
+
+    if not isinstance(judge_config, dict):
+        raise ValueError("judge must be a YAML mapping/object")
 
     if baseline is not None and not isinstance(baseline, dict):
         raise ValueError("baseline must be a YAML mapping/object")
@@ -334,6 +342,7 @@ def _load_inputs(config_path: str) -> EvaluationInputs:
         metric_name=metric_name.strip(),
         target=target,
         gate_config=gate_config,
+        judge_config=judge_config,
         baseline=baseline,
         regression_config=regression_config,
     )
@@ -472,7 +481,7 @@ def _execute_single_run(
         run.id,
     )
 
-    metric_plugin = build_metric_plugin(inputs.metric_name)
+    metric_plugin = build_metric_plugin(inputs.metric_name, inputs.judge_config)
     score_use_case = EvaluateCaseResultsUseCase(metric_plugin)
 
     scores = score_use_case.execute(

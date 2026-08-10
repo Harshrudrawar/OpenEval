@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
 from typing import Any
 
 from openeval.domain.plugins import MetricPlugin
@@ -41,6 +45,99 @@ def _contains_expected(expected_text: str, actual_text: str) -> bool:
     return re.search(pattern, actual_text) is not None
 
 
+def _ollama_generate(
+    *,
+    model: str,
+    prompt: str,
+    base_url: str,
+) -> str:
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+    }
+
+    request = urllib.request.Request(
+        url=f"{base_url.rstrip('/')}/generate",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            response_data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach Ollama at {base_url}") from exc
+
+    return str(response_data.get("response", ""))
+
+
+def _build_judge_prompt(
+    expected_output: dict[str, Any],
+    actual_output: dict[str, Any],
+) -> str:
+    expected_json = json.dumps(expected_output, ensure_ascii=False, indent=2)
+    actual_json = json.dumps(actual_output, ensure_ascii=False, indent=2)
+
+    return f"""
+You are a strict evaluation judge for LLM outputs.
+
+Decide whether the actual output is correct with respect to the expected output.
+
+Rules:
+- Return only a JSON object.
+- Use a score of 1.0 for correct and 0.0 for incorrect.
+- Be conservative.
+- Ignore style differences if the meaning is clearly correct.
+
+Return this exact shape:
+{{
+  "verdict": "correct" or "incorrect",
+  "score": 1.0 or 0.0,
+  "reason": "short explanation"
+}}
+
+Expected output:
+{expected_json}
+
+Actual output:
+{actual_json}
+""".strip()
+
+
+def _parse_judge_score(response_text: str) -> float:
+    text = response_text.strip()
+    if not text:
+        raise ValueError("LLM judge returned an empty response")
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        score = parsed.get("score")
+        if isinstance(score, (int, float)):
+            return 1.0 if float(score) >= 0.5 else 0.0
+
+        verdict = str(parsed.get("verdict", "")).strip().casefold()
+        if verdict in {"correct", "yes", "true", "pass", "passed", "1"}:
+            return 1.0
+        if verdict in {"incorrect", "no", "false", "fail", "failed", "0"}:
+            return 0.0
+
+    lower_text = text.casefold()
+
+    if re.search(r"\b(correct|yes|true|pass|passed)\b", lower_text):
+        return 1.0
+
+    if re.search(r"\b(incorrect|no|false|fail|failed)\b", lower_text):
+        return 0.0
+
+    raise ValueError(f"Could not parse LLM judge response: {response_text}")
+
+
 class AccuracyMetricPlugin(MetricPlugin):
     name = "accuracy"
 
@@ -72,7 +169,30 @@ class ContainsMetricPlugin(MetricPlugin):
         return 1.0 if _contains_expected(expected_text, actual_text) else 0.0
 
 
-def build_metric_plugin(name: str) -> MetricPlugin:
+@dataclass(frozen=True)
+class OllamaJudgeMetricPlugin(MetricPlugin):
+    name: str = "llm_judge"
+    model: str = "llama3"
+    base_url: str = "http://localhost:11434/api"
+
+    def evaluate(
+        self,
+        expected_output: dict[str, Any],
+        actual_output: dict[str, Any],
+    ) -> float:
+        prompt = _build_judge_prompt(expected_output, actual_output)
+        response_text = _ollama_generate(
+            model=self.model,
+            prompt=prompt,
+            base_url=self.base_url,
+        )
+        return _parse_judge_score(response_text)
+
+
+def build_metric_plugin(
+    name: str,
+    judge_config: dict[str, Any] | None = None,
+) -> MetricPlugin:
     metric_name = name.strip().casefold()
 
     if metric_name == "accuracy":
@@ -80,5 +200,22 @@ def build_metric_plugin(name: str) -> MetricPlugin:
 
     if metric_name == "contains":
         return ContainsMetricPlugin()
+
+    if metric_name == "llm_judge":
+        config = judge_config or {}
+        provider = str(config.get("provider", "ollama")).strip().casefold() or "ollama"
+        if provider != "ollama":
+            raise ValueError(f"Unsupported judge provider: {provider}")
+
+        model = str(config.get("model", "llama3")).strip() or "llama3"
+        base_url = (
+            str(config.get("base_url", "http://localhost:11434/api")).strip()
+            or "http://localhost:11434/api"
+        )
+
+        return OllamaJudgeMetricPlugin(
+            model=model,
+            base_url=base_url,
+        )
 
     raise ValueError(f"Unsupported metric plugin: {name}")
