@@ -1,4 +1,4 @@
-name: CI
+name: OpenEval CI
 
 on:
   push:
@@ -7,18 +7,22 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          check-latest: false
 
       - name: Install dependencies
         run: |
@@ -39,3 +43,10 @@ jobs:
 
       - name: Run OpenEval example
         run: python -m openeval.interface.cli run examples/basic/evaluation.yaml
+
+      - name: Upload OpenEval reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: openeval-reports
+          path: reports/**
