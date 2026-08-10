@@ -22,12 +22,12 @@ def build_run_report_html(
     prompt_version: str,
     provider: str,
     model: str,
-    metric_name: str,
+    metric_scores: dict[str, float],
     judge_provider: str | None,
     judge_model: str | None,
     cases_count: int,
     case_results_count: int,
-    accuracy: float,
+    overall_score: float,
     latency_ms: float,
     gate_threshold: float | None,
     gate_passed: bool | None,
@@ -46,11 +46,21 @@ def build_run_report_html(
 
     target_display = f"{provider}:{model}"
     latency_display = _format_latency(latency_ms)
+    metric_names = list(metric_scores)
 
-    if metric_name == "llm_judge":
+    if "llm_judge" in metric_names:
         judge_display = f"{judge_provider or 'unknown'}:{judge_model or 'unknown'}"
     else:
         judge_display = "Not applicable"
+
+    metric_cards = "\n".join(f"""
+      <div class="card">
+        <span class="label">{escape(metric_name)}</span>
+        <div class="value">{score:.2f}</div>
+      </div>
+    """ for metric_name, score in metric_scores.items())
+
+    metrics_display = ", ".join(metric_names) if metric_names else "none"
 
     return f"""<!doctype html>
 <html lang="en">
@@ -300,13 +310,8 @@ def build_run_report_html(
 
     <section class="summary">
       <div class="card">
-        <span class="label">Score</span>
-        <div class="value">{accuracy:.2f}</div>
-      </div>
-
-      <div class="card">
-        <span class="label">Metric</span>
-        <div class="value">{escape(metric_name)}</div>
+        <span class="label">Overall Score</span>
+        <div class="value">{overall_score:.2f}</div>
       </div>
 
       <div class="card">
@@ -323,11 +328,23 @@ def build_run_report_html(
         <span class="label">Cases</span>
         <div class="value">{cases_count}</div>
       </div>
+
+      <div class="card">
+        <span class="label">Metric Count</span>
+        <div class="value">{len(metric_scores)}</div>
+      </div>
     </section>
 
     <section class="gate-panel {gate_class}">
       <div class="gate-title">Quality Gate</div>
       <div class="gate-value">{escape(gate_display)}</div>
+    </section>
+
+    <section class="section">
+      <h2>Metric Scores</h2>
+      <div class="summary">
+        {metric_cards}
+      </div>
     </section>
 
     <section class="section">
@@ -355,8 +372,8 @@ def build_run_report_html(
         </div>
 
         <div class="meta-item">
-          <div class="meta-key">Metric</div>
-          <div class="meta-value">{escape(metric_name)}</div>
+          <div class="meta-key">Metrics</div>
+          <div class="meta-value">{escape(metrics_display)}</div>
         </div>
 
         <div class="meta-item">
@@ -376,8 +393,8 @@ def build_run_report_html(
 
       <div class="judge-grid">
         <div class="judge-item">
-          <div class="meta-key">Metric</div>
-          <div class="meta-value">{escape(metric_name)}</div>
+          <div class="meta-key">Metric Set</div>
+          <div class="meta-value">{escape(metrics_display)}</div>
         </div>
 
         <div class="judge-item">
@@ -626,12 +643,12 @@ def write_run_report(
     prompt_version: str,
     provider: str,
     model: str,
-    metric_name: str,
+    metric_scores: dict[str, float],
     judge_provider: str | None,
     judge_model: str | None,
     cases_count: int,
     case_results_count: int,
-    accuracy: float,
+    overall_score: float,
     latency_ms: float,
     gate_threshold: float | None,
     gate_passed: bool | None,
@@ -650,12 +667,12 @@ def write_run_report(
             prompt_version=prompt_version,
             provider=provider,
             model=model,
-            metric_name=metric_name,
+            metric_scores=metric_scores,
             judge_provider=judge_provider,
             judge_model=judge_model,
             cases_count=cases_count,
             case_results_count=case_results_count,
-            accuracy=accuracy,
+            overall_score=overall_score,
             latency_ms=latency_ms,
             gate_threshold=gate_threshold,
             gate_passed=gate_passed,

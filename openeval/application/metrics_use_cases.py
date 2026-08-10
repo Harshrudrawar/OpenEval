@@ -10,7 +10,18 @@ from openeval.domain.shared import ValidationError, generate_id
 
 @dataclass
 class EvaluateCaseResultsUseCase:
-    metric_plugin: MetricPlugin
+    metric_plugins: MetricPlugin | list[MetricPlugin]
+
+    def _resolve_metric_plugins(self) -> list[MetricPlugin]:
+        if isinstance(self.metric_plugins, list):
+            plugins = self.metric_plugins
+        else:
+            plugins = [self.metric_plugins]
+
+        if not plugins:
+            raise ValidationError("metric_plugins must not be empty")
+
+        return plugins
 
     def execute(
         self,
@@ -21,19 +32,21 @@ class EvaluateCaseResultsUseCase:
             raise ValidationError("cases and case_results must have the same length")
 
         scores: list[Score] = []
+        plugins = self._resolve_metric_plugins()
 
-        for case_result in case_results:
-            expected_output = case_result.metadata.get("expected_output", {})
-            score_value = self.metric_plugin.evaluate(
-                expected_output=expected_output,
-                actual_output=case_result.actual_output,
-            )
-            scores.append(
-                Score(
-                    id=generate_id(),
-                    name=self.metric_plugin.name,
-                    value=score_value,
+        for metric_plugin in plugins:
+            for case_result in case_results:
+                expected_output = case_result.metadata.get("expected_output", {})
+                score_value = metric_plugin.evaluate(
+                    expected_output=expected_output,
+                    actual_output=case_result.actual_output,
                 )
-            )
+                scores.append(
+                    Score(
+                        id=generate_id(),
+                        name=metric_plugin.name,
+                        value=score_value,
+                    )
+                )
 
         return scores

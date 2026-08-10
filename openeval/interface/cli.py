@@ -15,6 +15,8 @@ from openeval.application import (
     LoadCasesFromDatasetUseCase,
 )
 from openeval.application.comparison_use_cases import CompareScoresUseCase
+from openeval.domain.plugins import MetricPlugin
+from openeval.domain.scoring import Score
 from openeval.infrastructure import (
     CsvDatasetLoader,
     InMemoryEvaluationRepository,
@@ -38,7 +40,7 @@ class EvaluationInputs:
     dataset_path: str
     dataset_version_id: str
     prompt_version_id: str
-    metric_name: str
+    metric_names: list[str]
     target: dict[str, Any]
     gate_config: dict[str, Any]
     judge_config: dict[str, Any]
@@ -53,6 +55,7 @@ class RunOutcome:
     run_id: str
     provider: str
     model: str
+    metric_scores: dict[str, float]
     cases_count: int
     case_results_count: int
     accuracy: float
@@ -81,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     create_parser.add_argument(
         "--metric-plugins",
         required=True,
-        help="Metric plugin name",
+        help="Comma-separated metric plugin names",
     )
 
     run_parser = subparsers.add_parser(
@@ -169,6 +172,19 @@ def _default_model_for_provider(provider: str) -> str:
     return "unknown"
 
 
+def _parse_metric_names_arg(raw_value: str) -> list[str]:
+    metric_names = [part.strip() for part in raw_value.split(",")]
+    metric_names = [metric_name for metric_name in metric_names if metric_name]
+
+    if not metric_names:
+        raise ValueError("metric-plugins must contain at least one metric name")
+
+    if len(set(metric_names)) != len(metric_names):
+        raise ValueError("metric-plugins must not contain duplicates")
+
+    return metric_names
+
+
 def _load_history_entries(
     history_path: Path = RUN_HISTORY_PATH,
 ) -> list[dict[str, Any]]:
@@ -207,6 +223,36 @@ def _history_text(entry: dict[str, Any], key: str) -> str | None:
     return text or None
 
 
+def _history_metric_names(entry: dict[str, Any]) -> list[str]:
+    raw_metric_names = entry.get("metric_names")
+
+    if isinstance(raw_metric_names, list):
+        metric_names = [
+            str(metric_name).strip()
+            for metric_name in raw_metric_names
+            if str(metric_name).strip()
+        ]
+        if metric_names:
+            return metric_names
+
+    metric_name = _history_text(entry, "metric_name")
+    if metric_name is not None:
+        parts = [part.strip() for part in metric_name.split(",")]
+        metric_names = [part for part in parts if part]
+        if metric_names:
+            return metric_names
+
+    return []
+
+
+def _metric_signature(metric_names: list[str]) -> str:
+    return " | ".join(metric_names)
+
+
+def _metric_key(metric_names: list[str]) -> tuple[str, ...]:
+    return tuple(sorted(metric_names))
+
+
 def history_from_jsonl(limit: int = 20, kind: str = "all") -> int:
     if limit <= 0:
         raise ValueError("history limit must be greater than 0")
@@ -233,11 +279,14 @@ def history_from_jsonl(limit: int = 20, kind: str = "all") -> int:
             gate_status = _format_tri_state(entry.get("gate_passed"))
             regression_status = _format_tri_state(entry.get("regression_passed"))
 
+            metric_names = _history_metric_names(entry)
+            metric_display = _metric_signature(metric_names) if metric_names else ""
+
             print("RUN")
             print(f"Evaluation: {entry.get('evaluation_name', '')}")
             print(f"Provider: {entry.get('provider', '')}")
             print(f"Model: {entry.get('model', '')}")
-            print(f"Metric: {entry.get('metric_name', '')}")
+            print(f"Metrics: {metric_display}")
 
             judge_provider = _history_text(entry, "judge_provider")
             judge_model = _history_text(entry, "judge_model")
@@ -269,6 +318,7 @@ def history_from_jsonl(limit: int = 20, kind: str = "all") -> int:
             print(f"Winner: {entry.get('winner', '')}")
             print(f"Margin: {float(entry.get('margin', 0.0)):.2f}")
             print()
+
             continue
 
         print("UNKNOWN")
@@ -336,19 +386,24 @@ def _load_inputs(config_path: str) -> EvaluationInputs:
     if not isinstance(prompt_version_id, str) or not prompt_version_id.strip():
         raise ValueError("prompt.version must be a non-empty string")
 
-    if len(metrics) != 1:
-        raise ValueError("metrics must contain exactly one metric for now")
+    if not metrics:
+        raise ValueError("metrics must contain at least one metric")
 
-    metric_name = metrics[0]
-    if not isinstance(metric_name, str) or not metric_name.strip():
-        raise ValueError("metrics[0] must be a non-empty string")
+    metric_names: list[str] = []
+    for metric_name in metrics:
+        if not isinstance(metric_name, str) or not metric_name.strip():
+            raise ValueError("each metrics entry must be a non-empty string")
+        metric_names.append(metric_name.strip())
+
+    if len(set(metric_names)) != len(metric_names):
+        raise ValueError("metrics must not contain duplicates")
 
     return EvaluationInputs(
         name=name,
         dataset_path=dataset_path,
         dataset_version_id=dataset_version_id,
         prompt_version_id=prompt_version_id,
-        metric_name=metric_name.strip(),
+        metric_names=metric_names,
         target=target,
         gate_config=gate_config,
         judge_config=judge_config,
@@ -378,7 +433,7 @@ def _resolve_target(
 
 
 def _judge_details(inputs: EvaluationInputs) -> tuple[str | None, str | None]:
-    if inputs.metric_name != "llm_judge":
+    if "llm_judge" not in inputs.metric_names:
         return None, None
 
     judge_provider = (
@@ -389,6 +444,43 @@ def _judge_details(inputs: EvaluationInputs) -> tuple[str | None, str | None]:
     return judge_provider, judge_model
 
 
+def _metric_plugins_for_inputs(inputs: EvaluationInputs) -> list[MetricPlugin]:
+    plugins: list[MetricPlugin] = []
+
+    for metric_name in inputs.metric_names:
+        if metric_name == "llm_judge":
+            plugins.append(build_metric_plugin(metric_name, inputs.judge_config))
+        else:
+            plugins.append(build_metric_plugin(metric_name))
+
+    return plugins
+
+
+def _score_by_metric(
+    scores: list[Score],
+    metric_names: list[str],
+) -> dict[str, float]:
+    totals: dict[str, float] = {metric_name: 0.0 for metric_name in metric_names}
+    counts: dict[str, int] = {metric_name: 0 for metric_name in metric_names}
+
+    for score in scores:
+        if score.name not in totals:
+            totals[score.name] = 0.0
+            counts[score.name] = 0
+
+        totals[score.name] += score.value
+        counts[score.name] += 1
+
+    metric_scores: dict[str, float] = {}
+    for metric_name in metric_names:
+        count = counts.get(metric_name, 0)
+        metric_scores[metric_name] = (
+            totals.get(metric_name, 0.0) / count if count else 0.0
+        )
+
+    return metric_scores
+
+
 def _find_historical_baseline(
     inputs: EvaluationInputs,
     *,
@@ -396,22 +488,27 @@ def _find_historical_baseline(
     model: str,
 ) -> RunOutcome | None:
     entries = _load_history_entries()
+    expected_metric_key = _metric_key(inputs.metric_names)
 
     for entry in reversed(entries):
         if entry.get("kind") != "run":
             continue
 
+        entry_metric_key = _metric_key(_history_metric_names(entry))
+
         for key, expected in (
             ("evaluation_name", inputs.name),
             ("dataset_version_id", inputs.dataset_version_id),
             ("prompt_version_id", inputs.prompt_version_id),
-            ("metric_name", inputs.metric_name),
             ("provider", provider),
             ("model", model),
         ):
             if _history_text(entry, key) != expected:
                 break
         else:
+            if entry_metric_key != expected_metric_key:
+                continue
+
             if entry.get("gate_passed") is False:
                 continue
 
@@ -446,12 +543,20 @@ def _find_historical_baseline(
             gate_passed_raw = entry.get("gate_passed")
             gate_passed = gate_passed_raw if isinstance(gate_passed_raw, bool) else None
 
+            metric_scores_raw = entry.get("metric_scores")
+            metric_scores: dict[str, float] = {}
+            if isinstance(metric_scores_raw, dict):
+                for key, value in metric_scores_raw.items():
+                    if isinstance(key, str) and isinstance(value, (int, float)):
+                        metric_scores[key] = float(value)
+
             return RunOutcome(
                 evaluation_name=evaluation_name,
                 evaluation_id=evaluation_id,
                 run_id=run_id,
                 provider=entry_provider,
                 model=entry_model,
+                metric_scores=metric_scores,
                 cases_count=0,
                 case_results_count=0,
                 accuracy=accuracy,
@@ -478,7 +583,7 @@ def _execute_single_run(
         dataset_version_id=inputs.dataset_version_id,
         prompt_version_id=inputs.prompt_version_id,
         target=target,
-        metric_plugins=[{"name": inputs.metric_name}],
+        metric_plugins=[{"name": metric_name} for metric_name in inputs.metric_names],
         gate=inputs.gate_config or None,
     )
 
@@ -502,15 +607,18 @@ def _execute_single_run(
         run.id,
     )
 
-    metric_plugin = build_metric_plugin(inputs.metric_name, inputs.judge_config)
-    score_use_case = EvaluateCaseResultsUseCase(metric_plugin)
+    metric_plugins = _metric_plugins_for_inputs(inputs)
+    score_use_case = EvaluateCaseResultsUseCase(metric_plugins)
 
     scores = score_use_case.execute(
         case_results,
         case_results,
     )
 
-    accuracy = sum(score.value for score in scores) / len(scores) if scores else 0.0
+    metric_scores = _score_by_metric(scores, inputs.metric_names)
+    overall_score = (
+        sum(metric_scores.values()) / len(metric_scores) if metric_scores else 0.0
+    )
     latency_ms = (time.perf_counter() - started_at) * 1000
 
     gate_threshold_raw = inputs.gate_config.get("accuracy")
@@ -523,7 +631,7 @@ def _execute_single_run(
         except (TypeError, ValueError) as exc:
             raise ValueError("gate.accuracy must be a number") from exc
 
-        gate_passed = accuracy >= gate_threshold
+        gate_passed = overall_score >= gate_threshold
 
     provider = str(target.get("provider", "mock")).strip() or "mock"
     model = str(target.get("model", "unknown")).strip() or "unknown"
@@ -541,12 +649,12 @@ def _execute_single_run(
             prompt_version=inputs.prompt_version_id,
             provider=provider,
             model=model,
-            metric_name=inputs.metric_name,
+            metric_scores=metric_scores,
             judge_provider=judge_provider,
             judge_model=judge_model,
             cases_count=len(cases),
             case_results_count=len(case_results),
-            accuracy=accuracy,
+            overall_score=overall_score,
             latency_ms=latency_ms,
             gate_threshold=gate_threshold,
             gate_passed=gate_passed,
@@ -558,9 +666,10 @@ def _execute_single_run(
         run_id=run.id,
         provider=provider,
         model=model,
+        metric_scores=metric_scores,
         cases_count=len(cases),
         case_results_count=len(case_results),
-        accuracy=accuracy,
+        accuracy=overall_score,
         latency_ms=latency_ms,
         gate_threshold=gate_threshold,
         gate_passed=gate_passed,
@@ -611,7 +720,9 @@ def run_from_yaml(config_path: str) -> int:
                 "name": outcome.evaluation_name,
                 "dataset_version_id": inputs.dataset_version_id,
                 "prompt_version_id": inputs.prompt_version_id,
-                "metric_plugins": [{"name": inputs.metric_name}],
+                "metric_plugins": [
+                    {"name": metric_name} for metric_name in inputs.metric_names
+                ],
             },
         )(),
     )
@@ -619,7 +730,12 @@ def run_from_yaml(config_path: str) -> int:
     print()
     print(f"Loaded {outcome.cases_count} cases")
     print(f"Created {outcome.case_results_count} case results")
-    print(f"Accuracy: {outcome.accuracy:.2f}")
+    print(f"Overall Score: {outcome.accuracy:.2f}")
+
+    print("Metric Scores:")
+    for metric_name in inputs.metric_names:
+        print(f"  {metric_name}: {outcome.metric_scores.get(metric_name, 0.0):.2f}")
+
     print(f"Latency: {outcome.latency_ms:.0f} ms")
 
     if outcome.gate_threshold is None:
@@ -743,6 +859,9 @@ def run_from_yaml(config_path: str) -> int:
             if not regression_passed:
                 exit_code = 1
 
+    judge_provider, judge_model = _judge_details(inputs)
+    metric_names_text = _metric_signature(inputs.metric_names)
+
     history_path = append_run_history(
         {
             "kind": "run",
@@ -752,9 +871,11 @@ def run_from_yaml(config_path: str) -> int:
             "run_id": outcome.run_id,
             "dataset_version_id": inputs.dataset_version_id,
             "prompt_version_id": inputs.prompt_version_id,
-            "metric_name": inputs.metric_name,
-            "judge_provider": _judge_details(inputs)[0],
-            "judge_model": _judge_details(inputs)[1],
+            "metric_name": metric_names_text,
+            "metric_names": inputs.metric_names,
+            "metric_scores": outcome.metric_scores,
+            "judge_provider": judge_provider,
+            "judge_model": judge_model,
             "provider": outcome.provider,
             "model": outcome.model,
             "accuracy": outcome.accuracy,
@@ -835,8 +956,8 @@ def compare_from_yaml(
     print(f"Dataset Version: {inputs.dataset_version_id}")
     print(f"Prompt Version: {inputs.prompt_version_id}")
     print()
-    print(f"Left  ({comparison.left_name}): " f"{comparison.left_accuracy:.2f}")
-    print(f"Right ({comparison.right_name}): " f"{comparison.right_accuracy:.2f}")
+    print(f"Left  ({comparison.left_name}): {comparison.left_accuracy:.2f}")
+    print(f"Right ({comparison.right_name}): {comparison.right_accuracy:.2f}")
     print(f"Winner: {comparison.winner}")
     print(f"Margin: {comparison.margin:.2f}")
 
@@ -885,13 +1006,14 @@ def main() -> int:
 
     if args.command == "create-evaluation":
         use_case = create_use_case()
+        metric_names = _parse_metric_names_arg(args.metric_plugins)
 
         evaluation = use_case.execute(
             name=args.name,
             dataset_version_id=args.dataset_version_id,
             prompt_version_id=args.prompt_version_id,
             target={"provider": args.target},
-            metric_plugins=[{"name": args.metric_plugins}],
+            metric_plugins=[{"name": metric_name} for metric_name in metric_names],
         )
 
         print_evaluation_summary(evaluation)
