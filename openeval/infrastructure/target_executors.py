@@ -8,7 +8,13 @@ from openeval.application.ports import TargetExecutor
 class MockTargetExecutor(TargetExecutor):
     def execute(self, case: Any) -> dict[str, Any]:
         expected_output = getattr(case, "expected_output", {}) or {}
+
         return {
             "output": expected_output,
             "status": "ok",
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            },
         }

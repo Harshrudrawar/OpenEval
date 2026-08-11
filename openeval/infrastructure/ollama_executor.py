@@ -37,13 +37,33 @@ class OllamaTargetExecutor(TargetExecutor):
         except urllib.error.URLError as exc:
             raise RuntimeError(f"Could not reach Ollama at {self.base_url}") from exc
 
+        prompt_tokens = self._read_int(response_data.get("prompt_eval_count"))
+        output_tokens = self._read_int(response_data.get("eval_count"))
+
+        usage = {
+            "input_tokens": prompt_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": prompt_tokens + output_tokens,
+        }
+
         return {
             "output": {
                 "response": response_data.get("response", ""),
             },
             "status": "ok",
             "model": self.model,
+            "usage": usage,
         }
+
+    @staticmethod
+    def _read_int(value: Any) -> int:
+        if isinstance(value, bool):
+            return 0
+
+        if isinstance(value, int):
+            return max(value, 0)
+
+        return 0
 
     def _build_prompt(self, input_data: Any) -> str:
         if isinstance(input_data, dict):

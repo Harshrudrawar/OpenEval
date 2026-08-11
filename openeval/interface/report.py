@@ -1,16 +1,48 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 from typing import Any
 
 
+@dataclass(frozen=True)
+class TokenUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
 def _format_latency(latency_ms: float) -> str:
     if latency_ms >= 1000:
         return f"{latency_ms / 1000:.1f}s"
+
     return f"{latency_ms:.0f} ms"
+
+
+def _usage_cards(
+    usage: TokenUsage,
+    *,
+    prefix: str,
+) -> str:
+    return f"""
+      <div class="usage-item">
+        <span class="label">{escape(prefix)} Input Tokens</span>
+        <div class="usage-value">{usage.input_tokens:,}</div>
+      </div>
+
+      <div class="usage-item">
+        <span class="label">{escape(prefix)} Output Tokens</span>
+        <div class="usage-value">{usage.output_tokens:,}</div>
+      </div>
+
+      <div class="usage-item">
+        <span class="label">{escape(prefix)} Total Tokens</span>
+        <div class="usage-value">{usage.total_tokens:,}</div>
+      </div>
+    """
 
 
 def build_run_report_html(
@@ -29,6 +61,9 @@ def build_run_report_html(
     case_results_count: int,
     overall_score: float,
     latency_ms: float,
+    target_usage: TokenUsage,
+    judge_usage: TokenUsage,
+    combined_usage: TokenUsage,
     gate_threshold: float | None,
     gate_passed: bool | None,
 ) -> str:
@@ -49,7 +84,7 @@ def build_run_report_html(
     metric_names = list(metric_scores)
 
     if "llm_judge" in metric_names:
-        judge_display = f"{judge_provider or 'unknown'}:{judge_model or 'unknown'}"
+        judge_display = f"{judge_provider or 'unknown'}:" f"{judge_model or 'unknown'}"
     else:
         judge_display = "Not applicable"
 
@@ -61,6 +96,21 @@ def build_run_report_html(
     """ for metric_name, score in metric_scores.items())
 
     metrics_display = ", ".join(metric_names) if metric_names else "none"
+
+    target_usage_cards = _usage_cards(
+        target_usage,
+        prefix="Target",
+    )
+
+    judge_usage_cards = _usage_cards(
+        judge_usage,
+        prefix="Judge",
+    )
+
+    combined_usage_cards = _usage_cards(
+        combined_usage,
+        prefix="Combined",
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -226,6 +276,54 @@ def build_run_report_html(
       overflow-wrap: anywhere;
     }}
 
+    .usage {{
+      margin-top: 22px;
+      background: var(--neutral-soft);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+    }}
+
+    .usage h2 {{
+      margin: 0 0 16px;
+      font-size: 18px;
+    }}
+
+    .usage-group {{
+      margin-top: 16px;
+    }}
+
+    .usage-group:first-child {{
+      margin-top: 0;
+    }}
+
+    .usage-group-title {{
+      font-size: 12px;
+      font-weight: 750;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 9px;
+    }}
+
+    .usage-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }}
+
+    .usage-item {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+    }}
+
+    .usage-value {{
+      font-size: 22px;
+      font-weight: 750;
+    }}
+
     .judge {{
       margin-top: 22px;
       background: var(--accent-soft);
@@ -333,6 +431,11 @@ def build_run_report_html(
         <span class="label">Metric Count</span>
         <div class="value">{len(metric_scores)}</div>
       </div>
+
+      <div class="card">
+        <span class="label">Combined Tokens</span>
+        <div class="value">{combined_usage.total_tokens:,}</div>
+      </div>
     </section>
 
     <section class="gate-panel {gate_class}">
@@ -342,8 +445,34 @@ def build_run_report_html(
 
     <section class="section">
       <h2>Metric Scores</h2>
+
       <div class="summary">
         {metric_cards}
+      </div>
+    </section>
+
+    <section class="usage">
+      <h2>Token Usage</h2>
+
+      <div class="usage-group">
+        <div class="usage-group-title">Target</div>
+        <div class="usage-grid">
+          {target_usage_cards}
+        </div>
+      </div>
+
+      <div class="usage-group">
+        <div class="usage-group-title">Judge</div>
+        <div class="usage-grid">
+          {judge_usage_cards}
+        </div>
+      </div>
+
+      <div class="usage-group">
+        <div class="usage-group-title">Combined</div>
+        <div class="usage-grid">
+          {combined_usage_cards}
+        </div>
       </div>
     </section>
 
@@ -650,11 +779,17 @@ def write_run_report(
     case_results_count: int,
     overall_score: float,
     latency_ms: float,
+    target_usage: TokenUsage,
+    judge_usage: TokenUsage,
+    combined_usage: TokenUsage,
     gate_threshold: float | None,
     gate_passed: bool | None,
 ) -> Path:
     out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     report_path = out_dir / f"{run_id}.html"
 
@@ -674,6 +809,9 @@ def write_run_report(
             case_results_count=case_results_count,
             overall_score=overall_score,
             latency_ms=latency_ms,
+            target_usage=target_usage,
+            judge_usage=judge_usage,
+            combined_usage=combined_usage,
             gate_threshold=gate_threshold,
             gate_passed=gate_passed,
         ),
@@ -698,7 +836,10 @@ def write_comparison_report(
     margin: float,
 ) -> Path:
     out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     report_path = out_dir / f"comparison-{evaluation_id}.html"
 
@@ -729,9 +870,21 @@ def append_run_history(
     history_path: str | Path = RUN_HISTORY_PATH,
 ) -> Path:
     path = Path(history_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    with path.open(
+        "a",
+        encoding="utf-8",
+    ) as handle:
+        handle.write(
+            json.dumps(
+                record,
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
 
     return path

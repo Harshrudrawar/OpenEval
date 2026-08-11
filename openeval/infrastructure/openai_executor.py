@@ -33,11 +33,36 @@ class OpenAITargetExecutor(TargetExecutor):
         )
 
         text = getattr(response, "output_text", "")
+        usage = self._extract_usage(response)
 
         return {
             "output": {"response": text},
             "status": "ok",
             "model": self.model,
+            "usage": usage,
+        }
+
+    @staticmethod
+    def _extract_usage(response: Any) -> dict[str, int]:
+        usage = getattr(response, "usage", None)
+
+        if usage is None:
+            return {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            }
+
+        input_tokens = getattr(usage, "input_tokens", 0)
+        output_tokens = getattr(usage, "output_tokens", 0)
+        total_tokens = getattr(usage, "total_tokens", 0)
+
+        return {
+            "input_tokens": (int(input_tokens) if isinstance(input_tokens, int) else 0),
+            "output_tokens": (
+                int(output_tokens) if isinstance(output_tokens, int) else 0
+            ),
+            "total_tokens": (int(total_tokens) if isinstance(total_tokens, int) else 0),
         }
 
     def _build_prompt(self, input_data: Any) -> str:
