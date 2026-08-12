@@ -298,11 +298,28 @@ def build_run_report_html(
     operational_gate_results: dict[str, bool] | None = None,
     gate_failures: list[str] | None = None,
     gate_config: dict[str, Any] | None = None,
+    run_status: str = "completed",
+    completed_cases_count: int | None = None,
+    failed_cases_count: int | None = None,
+    failed_cases: list[dict[str, str]] | None = None,
+    metric_weights: dict[str, float] | None = None,
+    regression_source: str | None = None,
+    baseline_score: float | None = None,
+    regression_delta: float | None = None,
+    regression_passed: bool | None = None,
 ) -> str:
     metric_gate_results = metric_gate_results or {}
     operational_gate_results = operational_gate_results or {}
     gate_failures = gate_failures or []
     gate_config = gate_config or {}
+    failed_cases = failed_cases or []
+    metric_weights = metric_weights or {}
+
+    if completed_cases_count is None:
+        completed_cases_count = max(cases_count - len(failed_cases), 0)
+
+    if failed_cases_count is None:
+        failed_cases_count = len(failed_cases)
 
     generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -331,17 +348,6 @@ def build_run_report_html(
         judge_display = f"{judge_provider or 'unknown'}:" f"{judge_model or 'unknown'}"
     else:
         judge_display = "Not applicable"
-
-    metric_cards = "\n".join(f"""
-      <div class="card">
-        <span class="label">
-          {escape(metric_name)}
-        </span>
-        <div class="value">
-          {score:.2f}
-        </div>
-      </div>
-    """ for metric_name, score in metric_scores.items())
 
     metrics_display = ", ".join(metric_names) if metric_names else "none"
 
@@ -373,6 +379,63 @@ def build_run_report_html(
     )
 
     gate_failure_cards = _build_gate_failure_cards(gate_failures)
+
+    metric_weight_cards = "\n".join(f"""
+      <div class="gate-item operational-item">
+        <div>
+          <div class="gate-item-name">
+            {escape(metric_name)}
+          </div>
+          <div class="gate-item-detail">
+            Score: {metric_scores.get(metric_name, 0.0):.2f}
+          </div>
+        </div>
+        <div class="gate-item-status neutral">
+          Weight: {weight:.2f}
+        </div>
+      </div>
+    """ for metric_name, weight in metric_weights.items())
+
+    if not metric_weight_cards:
+        metric_weight_cards = (
+            '<div class="gate-empty">No metric weights configured.</div>'
+        )
+
+    failed_case_cards = "\n".join(f"""
+      <div class="failure-item">
+        <strong>{escape(case.get("case_id", ""))}</strong>
+        — {escape(case.get("error_type", "ExecutionError"))}:
+        {escape(case.get("error_message", "Case execution failed"))}
+      </div>
+    """ for case in failed_cases)
+
+    if not failed_case_cards:
+        failed_case_cards = '<div class="gate-empty">No failed cases.</div>'
+
+    if run_status == "completed":
+        run_status_class = "success"
+    elif run_status == "failed":
+        run_status_class = "danger"
+    else:
+        run_status_class = "neutral"
+
+    run_status_display = run_status.capitalize()
+
+    if baseline_score is None:
+        regression_display = "Not configured"
+        regression_class = "neutral"
+        regression_detail = "No baseline regression check was performed."
+    else:
+        regression_display = "Passed" if regression_passed else "Failed"
+        regression_class = "success" if regression_passed else "danger"
+        delta_text = (
+            f"{regression_delta:+.2f}" if regression_delta is not None else "N/A"
+        )
+        regression_detail = (
+            f"Baseline: {baseline_score:.2f} · "
+            f"Current: {overall_score:.2f} · "
+            f"Delta: {delta_text}"
+        )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -794,6 +857,34 @@ def build_run_report_html(
       padding: 4px 0;
     }}
 
+    .status-card {{
+      margin-top: 22px;
+      border-radius: 18px;
+      padding: 20px;
+      background: var(--card);
+      border: 1px solid var(--border);
+    }}
+
+    .status-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }}
+
+    .regression-card {{
+      margin-top: 22px;
+      border-radius: 18px;
+      padding: 20px;
+      background: var(--card);
+      border: 1px solid var(--border);
+    }}
+
+    .regression-value {{
+      font-size: 22px;
+      font-weight: 750;
+    }}
+
     .footer {{
       margin-top: 26px;
       color: var(--muted);
@@ -897,6 +988,27 @@ def build_run_report_html(
 
     </section>
 
+    <section class="status-card">
+      <div class="gate-section-title">Run Execution</div>
+      <div class="status-grid">
+        <div class="card">
+          <span class="label">Run Status</span>
+          <div class="value {run_status_class}">{escape(run_status_display)}</div>
+        </div>
+        <div class="card">
+          <span class="label">Completed Cases</span>
+          <div class="value">{completed_cases_count}</div>
+        </div>
+        <div class="card">
+          <span class="label">Failed Cases</span>
+          <div class="value">
+            {'danger' if failed_cases_count else ''}
+            {failed_cases_count}
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="gate-panel {gate_class}">
       <div class="gate-title">
         Quality Gate
@@ -944,11 +1056,31 @@ def build_run_report_html(
 
     <section class="section">
       <h2>
-        Metric Scores
+        Metric Scores &amp; Weights
       </h2>
 
-      <div class="summary">
-        {metric_cards}
+      <div class="gate-grid">
+        {metric_weight_cards}
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>
+        Failed Cases
+      </h2>
+
+      <div class="failure-panel">
+        {failed_case_cards}
+      </div>
+    </section>
+
+    <section class="regression-card">
+      <div class="gate-section-title">Regression</div>
+      <div class="regression-value {regression_class}">
+        {escape(regression_display)}
+      </div>
+      <div class="gate-item-detail">
+        Source: {escape(regression_source or "none")} · {escape(regression_detail)}
       </div>
     </section>
 
@@ -1063,8 +1195,8 @@ def build_run_report_html(
           <div class="meta-key">
             Status
           </div>
-          <div class="meta-value success">
-            Completed
+          <div class="meta-value {run_status_class}">
+            {escape(run_status_display)}
           </div>
         </div>
 
@@ -1421,6 +1553,15 @@ def write_run_report(
     operational_gate_results: dict[str, bool] | None = None,
     gate_failures: list[str] | None = None,
     gate_config: dict[str, Any] | None = None,
+    run_status: str = "completed",
+    completed_cases_count: int | None = None,
+    failed_cases_count: int | None = None,
+    failed_cases: list[dict[str, str]] | None = None,
+    metric_weights: dict[str, float] | None = None,
+    regression_source: str | None = None,
+    baseline_score: float | None = None,
+    regression_delta: float | None = None,
+    regression_passed: bool | None = None,
 ) -> Path:
     out_dir = Path(output_dir)
     out_dir.mkdir(
@@ -1456,6 +1597,15 @@ def write_run_report(
             operational_gate_results=(operational_gate_results),
             gate_failures=gate_failures,
             gate_config=gate_config,
+            run_status=run_status,
+            completed_cases_count=completed_cases_count,
+            failed_cases_count=failed_cases_count,
+            failed_cases=failed_cases,
+            metric_weights=metric_weights,
+            regression_source=regression_source,
+            baseline_score=baseline_score,
+            regression_delta=regression_delta,
+            regression_passed=regression_passed,
         ),
         encoding="utf-8",
     )

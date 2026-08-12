@@ -130,6 +130,16 @@ def build_parser() -> argparse.ArgumentParser:
         "config_path",
         help="Path to evaluation YAML file",
     )
+    run_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the run result as JSON",
+    )
+    run_parser.add_argument(
+        "--output",
+        type=Path,
+        help="Write the run result as JSON to this file",
+    )
 
     compare_parser = subparsers.add_parser(
         "compare",
@@ -1728,35 +1738,7 @@ def _execute_single_run(
         combined_cost=costs.combined_cost,
     )
 
-    report_path = None
-    if write_report:
-        report_path = write_run_report(
-            "reports",
-            evaluation_name=evaluation.name,
-            evaluation_id=evaluation.id,
-            run_id=run.id,
-            dataset_version=inputs.dataset_version_id,
-            prompt_version=inputs.prompt_version_id,
-            provider=provider,
-            model=model,
-            metric_scores=metric_scores,
-            judge_provider=judge_provider,
-            judge_model=judge_model,
-            cases_count=len(cases),
-            case_results_count=len(case_results),
-            overall_score=overall_score,
-            latency_ms=latency_ms,
-            target_usage=target_usage,
-            judge_usage=judge_usage,
-            combined_usage=combined_usage,
-            costs=costs,
-            gate_threshold=gate_threshold,
-            gate_passed=gate_passed,
-            metric_gate_results=metric_gate_results,
-            operational_gate_results=operational_gate_results,
-            gate_failures=gate_failures,
-            gate_config=inputs.gate_config,
-        )
+    report_path: Path | None = None
 
     return RunOutcome(
         evaluation_name=evaluation.name,
@@ -1784,6 +1766,107 @@ def _execute_single_run(
         failed_cases=failed_cases,
         report_path=report_path,
     )
+
+
+def _write_final_run_report(
+    *,
+    inputs: EvaluationInputs,
+    outcome: RunOutcome,
+    regression_source: str | None,
+    baseline_outcome: RunOutcome | None,
+    regression_delta: float | None,
+    regression_passed: bool | None,
+) -> Path:
+    judge_provider, judge_model = _judge_details(inputs)
+
+    return write_run_report(
+        "reports",
+        evaluation_name=outcome.evaluation_name,
+        evaluation_id=outcome.evaluation_id,
+        run_id=outcome.run_id,
+        dataset_version=inputs.dataset_version_id,
+        prompt_version=inputs.prompt_version_id,
+        provider=outcome.provider,
+        model=outcome.model,
+        metric_scores=outcome.metric_scores,
+        judge_provider=judge_provider,
+        judge_model=judge_model,
+        cases_count=outcome.cases_count,
+        case_results_count=outcome.case_results_count,
+        overall_score=outcome.accuracy,
+        latency_ms=outcome.latency_ms,
+        target_usage=outcome.target_usage,
+        judge_usage=outcome.judge_usage,
+        combined_usage=outcome.combined_usage,
+        costs=outcome.costs,
+        gate_threshold=outcome.gate_threshold,
+        gate_passed=outcome.gate_passed,
+        metric_gate_results=outcome.metric_gate_results,
+        operational_gate_results=outcome.operational_gate_results,
+        gate_failures=outcome.gate_failures,
+        gate_config=inputs.gate_config,
+        run_status=outcome.run_status,
+        completed_cases_count=outcome.completed_cases_count,
+        failed_cases_count=outcome.failed_cases_count,
+        failed_cases=outcome.failed_cases,
+        metric_weights={
+            metric_config.name: metric_config.weight
+            for metric_config in inputs.metric_configs
+        },
+        regression_source=regression_source,
+        baseline_score=(
+            baseline_outcome.accuracy if baseline_outcome is not None else None
+        ),
+        regression_delta=regression_delta,
+        regression_passed=regression_passed,
+    )
+
+
+def _run_outcome_to_dict(
+    outcome: RunOutcome,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "1",
+        "run_id": outcome.run_id,
+        "evaluation_id": outcome.evaluation_id,
+        "evaluation_name": outcome.evaluation_name,
+        "status": outcome.run_status,
+        "provider": outcome.provider,
+        "model": outcome.model,
+        "overall_score": outcome.accuracy,
+        "metrics": outcome.metric_scores,
+        "cases": {
+            "total": outcome.cases_count,
+            "completed": outcome.completed_cases_count,
+            "failed": outcome.failed_cases_count,
+        },
+        "usage": {
+            "target": {
+                "input_tokens": outcome.target_usage.input_tokens,
+                "output_tokens": outcome.target_usage.output_tokens,
+                "total_tokens": outcome.target_usage.total_tokens,
+            },
+            "judge": {
+                "input_tokens": outcome.judge_usage.input_tokens,
+                "output_tokens": outcome.judge_usage.output_tokens,
+                "total_tokens": outcome.judge_usage.total_tokens,
+            },
+            "combined": {
+                "input_tokens": outcome.combined_usage.input_tokens,
+                "output_tokens": outcome.combined_usage.output_tokens,
+                "total_tokens": outcome.combined_usage.total_tokens,
+            },
+        },
+        "estimated_cost_usd": outcome.costs.combined_cost,
+        "latency_ms": outcome.latency_ms,
+        "gates": {
+            "passed": outcome.gate_passed,
+            "metric_results": outcome.metric_gate_results,
+            "operational_results": outcome.operational_gate_results,
+            "failures": outcome.gate_failures,
+        },
+        "failed_cases": outcome.failed_cases,
+    }
 
 
 def _print_regression_summary(
@@ -1820,6 +1903,9 @@ def _print_regression_summary(
 
 def run_from_yaml(
     config_path: str,
+    *,
+    json_output: bool = False,
+    output_path: Path | None = None,
 ) -> int:
     inputs = _load_inputs(config_path)
 
@@ -1828,6 +1914,37 @@ def run_from_yaml(
         target=inputs.target,
         write_report=True,
     )
+
+    payload = _run_outcome_to_dict(outcome)
+
+    if output_path is not None:
+        output_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        output_path.write_text(
+            json.dumps(
+                payload,
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    if json_output:
+        print(
+            json.dumps(
+                payload,
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return (
+            0
+            if outcome.run_status == "completed" and outcome.gate_passed is not False
+            else 1
+        )
 
     print_evaluation_summary(
         type(
@@ -2136,6 +2253,22 @@ def run_from_yaml(
             if not regression_passed:
                 exit_code = 1
 
+    report_path = _write_final_run_report(
+        inputs=inputs,
+        outcome=outcome,
+        regression_source=baseline_source,
+        baseline_outcome=baseline_outcome,
+        regression_delta=regression_delta,
+        regression_passed=regression_passed,
+    )
+
+    outcome = RunOutcome(
+        **{
+            **outcome.__dict__,
+            "report_path": report_path,
+        }
+    )
+
     judge_provider, judge_model = _judge_details(inputs)
 
     metric_names_text = _metric_signature(inputs.metric_names)
@@ -2360,7 +2493,11 @@ def main() -> int:
         return 0
 
     if args.command == "run":
-        return run_from_yaml(args.config_path)
+        return run_from_yaml(
+            args.config_path,
+            json_output=args.json,
+            output_path=args.output,
+        )
 
     if args.command == "compare":
         return compare_from_yaml(
