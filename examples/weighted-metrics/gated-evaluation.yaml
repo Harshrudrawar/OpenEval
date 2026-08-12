@@ -1,0 +1,23 @@
+name: Weighted Metric Gates Demo
+
+dataset:
+  version: dataset-v1
+  path: examples/basic/dataset.csv
+
+prompt:
+  version: prompt-v1
+
+target:
+  provider: mock
+
+metrics:
+  - name: accuracy
+    weight: 0.25
+  - name: contains
+    weight: 0.75
+
+gate:
+  overall: 0.80
+  metrics:
+    accuracy: 0.90
+    contains: 0.90

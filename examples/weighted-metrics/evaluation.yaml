@@ -1,0 +1,20 @@
+name: Weighted Metrics Demo
+
+dataset:
+  version: dataset-v1
+  path: examples/basic/dataset.csv
+
+prompt:
+  version: prompt-v1
+
+target:
+  provider: mock
+
+metrics:
+  - name: accuracy
+    weight: 0.25
+  - name: contains
+    weight: 0.75
+
+gate:
+  accuracy: 0.00

@@ -25,7 +25,9 @@ from openeval.infrastructure import (
 )
 from openeval.infrastructure.executor_factory import build_target_executor
 from openeval.infrastructure.metric_plugins import build_metric_plugin
+from openeval.infrastructure.pricing import estimate_cost
 from openeval.interface.report import (
+    CostSummary,
     TokenUsage,
     append_run_history,
     write_comparison_report,
@@ -37,17 +39,27 @@ RUN_HISTORY_PATH = Path("reports") / "run-history.jsonl"
 
 
 @dataclass(frozen=True)
+class MetricConfig:
+    name: str
+    weight: float = 1.0
+
+
+@dataclass(frozen=True)
 class EvaluationInputs:
     name: str
     dataset_path: str
     dataset_version_id: str
     prompt_version_id: str
-    metric_names: list[str]
+    metric_configs: list[MetricConfig]
     target: dict[str, Any]
     gate_config: dict[str, Any]
     judge_config: dict[str, Any]
     baseline: dict[str, Any] | None
     regression_config: dict[str, Any]
+
+    @property
+    def metric_names(self) -> list[str]:
+        return [metric_config.name for metric_config in self.metric_configs]
 
 
 @dataclass(frozen=True)
@@ -65,8 +77,11 @@ class RunOutcome:
     target_usage: TokenUsage
     judge_usage: TokenUsage
     combined_usage: TokenUsage
+    costs: CostSummary
     gate_threshold: float | None
     gate_passed: bool | None
+    metric_gate_results: dict[str, bool]
+    gate_failures: list[str]
     report_path: Path | None
 
 
@@ -228,6 +243,13 @@ def _format_tri_state(value: Any) -> str:
     return "N/A"
 
 
+def _format_cost(cost: float | None) -> str:
+    if cost is None:
+        return "N/A"
+
+    return f"${cost:.6f}"
+
+
 def _history_text(
     entry: dict[str, Any],
     key: str,
@@ -331,6 +353,7 @@ def _aggregate_target_usage(
                 {},
             )
         )
+
         usage = _add_usage(
             usage,
             case_usage,
@@ -362,6 +385,218 @@ def _aggregate_judge_usage(
         )
 
     return usage
+
+
+def _estimate_cost_for_usage(
+    *,
+    provider: str,
+    model: str,
+    usage: TokenUsage,
+) -> float | None:
+    return estimate_cost(
+        provider,
+        model,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+    )
+
+
+def _build_cost_summary(
+    *,
+    target_provider: str,
+    target_model: str,
+    target_usage: TokenUsage,
+    judge_provider: str | None,
+    judge_model: str | None,
+    judge_usage: TokenUsage,
+) -> CostSummary:
+    target_cost = _estimate_cost_for_usage(
+        provider=target_provider,
+        model=target_model,
+        usage=target_usage,
+    )
+
+    judge_cost: float | None = None
+
+    if judge_provider is not None and judge_model is not None:
+        judge_cost = _estimate_cost_for_usage(
+            provider=judge_provider,
+            model=judge_model,
+            usage=judge_usage,
+        )
+
+    if target_cost is None or (
+        judge_provider is not None and judge_model is not None and judge_cost is None
+    ):
+        combined_cost = None
+    else:
+        combined_cost = (target_cost or 0.0) + (judge_cost or 0.0)
+
+    return CostSummary(
+        target_cost=target_cost,
+        judge_cost=judge_cost,
+        combined_cost=combined_cost,
+    )
+
+
+def _validate_gate_metric_config(
+    gate_config: dict[str, Any],
+) -> dict[str, float]:
+    raw_metrics = gate_config.get(
+        "metrics",
+        {},
+    )
+
+    if raw_metrics is None:
+        return {}
+
+    if not isinstance(
+        raw_metrics,
+        dict,
+    ):
+        raise ValueError("gate.metrics must be a YAML mapping/object")
+
+    metric_thresholds: dict[str, float] = {}
+
+    for metric_name_raw, threshold_raw in raw_metrics.items():
+        metric_name = str(metric_name_raw).strip()
+
+        if not metric_name:
+            raise ValueError("gate.metrics cannot contain an empty metric name")
+
+        if isinstance(
+            threshold_raw,
+            bool,
+        ):
+            raise ValueError(
+                f"gate metric threshold for {metric_name} " "must be a number"
+            )
+
+        try:
+            threshold = float(threshold_raw)
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise ValueError(
+                f"gate metric threshold for {metric_name} " "must be a number"
+            ) from exc
+
+        metric_thresholds[metric_name] = threshold
+
+    return metric_thresholds
+
+
+def _evaluate_gates(
+    *,
+    overall_score: float,
+    metric_scores: dict[str, float],
+    gate_config: dict[str, Any],
+) -> tuple[
+    float | None,
+    bool | None,
+    dict[str, bool],
+    list[str],
+]:
+    if not gate_config:
+        return (
+            None,
+            None,
+            {},
+            [],
+        )
+
+    checks: list[tuple[str, bool]] = []
+
+    legacy_accuracy_raw = gate_config.get("accuracy")
+
+    overall_raw = gate_config.get("overall")
+
+    gate_threshold: float | None = None
+
+    if legacy_accuracy_raw is not None:
+        if isinstance(
+            legacy_accuracy_raw,
+            bool,
+        ):
+            raise ValueError("gate.accuracy must be a number")
+
+        try:
+            legacy_accuracy = float(legacy_accuracy_raw)
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise ValueError("gate.accuracy must be a number") from exc
+
+        gate_threshold = legacy_accuracy
+
+        checks.append(
+            (
+                "accuracy",
+                overall_score >= legacy_accuracy,
+            )
+        )
+
+    if overall_raw is not None:
+        if isinstance(
+            overall_raw,
+            bool,
+        ):
+            raise ValueError("gate.overall must be a number")
+
+        try:
+            overall_threshold = float(overall_raw)
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise ValueError("gate.overall must be a number") from exc
+
+        if gate_threshold is None:
+            gate_threshold = overall_threshold
+
+        checks.append(
+            (
+                "overall",
+                overall_score >= overall_threshold,
+            )
+        )
+
+    metric_thresholds = _validate_gate_metric_config(gate_config)
+
+    metric_gate_results: dict[str, bool] = {}
+
+    for metric_name, threshold in metric_thresholds.items():
+        actual_score = metric_scores.get(metric_name)
+
+        passed = actual_score is not None and actual_score >= threshold
+
+        metric_gate_results[metric_name] = passed
+
+        checks.append(
+            (
+                f"metric:{metric_name}",
+                passed,
+            )
+        )
+
+    if not checks:
+        return (
+            None,
+            None,
+            metric_gate_results,
+            [],
+        )
+
+    failures = [check_name for check_name, passed in checks if not passed]
+
+    return (
+        gate_threshold,
+        not failures,
+        metric_gate_results,
+        failures,
+    )
 
 
 def history_from_jsonl(
@@ -451,6 +686,46 @@ def history_from_jsonl(
                 f"  Output Tokens: " f"{int(entry.get('combined_output_tokens', 0)):,}"
             )
             print(f"  Total Tokens: " f"{int(entry.get('combined_total_tokens', 0)):,}")
+
+            print("Estimated API Cost")
+            print(f"  Target: " f"{_format_cost(entry.get('target_cost'))}")
+            print(f"  Judge: " f"{_format_cost(entry.get('judge_cost'))}")
+            print(f"  Combined: " f"{_format_cost(entry.get('combined_cost'))}")
+
+            gate_results = entry.get(
+                "metric_gate_results",
+                {},
+            )
+
+            if (
+                isinstance(
+                    gate_results,
+                    dict,
+                )
+                and gate_results
+            ):
+                print("Metric Gates")
+
+                for metric_name, passed in gate_results.items():
+                    status = "PASSED" if passed else "FAILED"
+                    print(f"  {metric_name}: " f"{status}")
+
+            gate_failures = entry.get(
+                "gate_failures",
+                [],
+            )
+
+            if (
+                isinstance(
+                    gate_failures,
+                    list,
+                )
+                and gate_failures
+            ):
+                print("Gate Failures")
+
+                for failure in gate_failures:
+                    print(f"  {failure}")
 
             print()
             print(f"Gate: {gate_status}")
@@ -623,19 +898,81 @@ def _load_inputs(
     if not metrics:
         raise ValueError("metrics must contain at least one metric")
 
-    metric_names: list[str] = []
+    metric_configs: list[MetricConfig] = []
 
-    for metric_name in metrics:
-        if (
-            not isinstance(
-                metric_name,
-                str,
-            )
-            or not metric_name.strip()
+    for metric_entry in metrics:
+        if isinstance(
+            metric_entry,
+            str,
         ):
-            raise ValueError("each metrics entry must be a non-empty string")
+            metric_name = metric_entry.strip()
 
-        metric_names.append(metric_name.strip())
+            if not metric_name:
+                raise ValueError("each metrics entry must have a " "non-empty name")
+
+            metric_configs.append(
+                MetricConfig(
+                    name=metric_name,
+                    weight=1.0,
+                )
+            )
+            continue
+
+        if isinstance(
+            metric_entry,
+            dict,
+        ):
+            metric_name_raw = metric_entry.get(
+                "name",
+                "",
+            )
+
+            if (
+                not isinstance(
+                    metric_name_raw,
+                    str,
+                )
+                or not metric_name_raw.strip()
+            ):
+                raise ValueError("each metrics entry must have a " "non-empty name")
+
+            weight_raw = metric_entry.get(
+                "weight",
+                1.0,
+            )
+
+            if isinstance(
+                weight_raw,
+                bool,
+            ):
+                raise ValueError("metric weight must be a " "number greater than 0")
+
+            try:
+                weight = float(weight_raw)
+            except (
+                TypeError,
+                ValueError,
+            ) as exc:
+                raise ValueError(
+                    "metric weight must be a " "number greater than 0"
+                ) from exc
+
+            if weight <= 0:
+                raise ValueError("metric weight must be greater than 0")
+
+            metric_configs.append(
+                MetricConfig(
+                    name=metric_name_raw.strip(),
+                    weight=weight,
+                )
+            )
+            continue
+
+        raise ValueError(
+            "each metrics entry must be a string " "or YAML mapping/object"
+        )
+
+    metric_names = [metric_config.name for metric_config in metric_configs]
 
     if len(set(metric_names)) != len(metric_names):
         raise ValueError("metrics must not contain duplicates")
@@ -645,7 +982,7 @@ def _load_inputs(
         dataset_path=dataset_path,
         dataset_version_id=dataset_version_id,
         prompt_version_id=prompt_version_id,
-        metric_names=metric_names,
+        metric_configs=metric_configs,
         target=target,
         gate_config=gate_config,
         judge_config=judge_config,
@@ -712,7 +1049,9 @@ def _metric_plugins_for_inputs(
 ) -> list[MetricPlugin]:
     plugins: list[MetricPlugin] = []
 
-    for metric_name in inputs.metric_names:
+    for metric_config in inputs.metric_configs:
+        metric_name = metric_config.name
+
         if metric_name == "llm_judge":
             plugins.append(
                 build_metric_plugin(
@@ -761,6 +1100,30 @@ def _score_by_metric(
         )
 
     return metric_scores
+
+
+def _weighted_overall_score(
+    metric_scores: dict[str, float],
+    metric_configs: list[MetricConfig],
+) -> float:
+    if not metric_configs:
+        return 0.0
+
+    total_weight = sum(metric_config.weight for metric_config in metric_configs)
+
+    if total_weight <= 0:
+        return 0.0
+
+    weighted_sum = sum(
+        metric_scores.get(
+            metric_config.name,
+            0.0,
+        )
+        * metric_config.weight
+        for metric_config in metric_configs
+    )
+
+    return weighted_sum / total_weight
 
 
 def _find_historical_baseline(
@@ -885,6 +1248,43 @@ def _find_historical_baseline(
                 else None
             )
 
+            metric_gate_results_raw = entry.get(
+                "metric_gate_results",
+                {},
+            )
+
+            metric_gate_results: dict[
+                str,
+                bool,
+            ] = {}
+
+            if isinstance(
+                metric_gate_results_raw,
+                dict,
+            ):
+                for key, value in metric_gate_results_raw.items():
+                    if isinstance(
+                        key,
+                        str,
+                    ) and isinstance(
+                        value,
+                        bool,
+                    ):
+                        metric_gate_results[key] = value
+
+            gate_failures_raw = entry.get(
+                "gate_failures",
+                [],
+            )
+
+            gate_failures: list[str] = []
+
+            if isinstance(
+                gate_failures_raw,
+                list,
+            ):
+                gate_failures = [str(failure) for failure in gate_failures_raw]
+
             metric_scores_raw = entry.get("metric_scores")
 
             metric_scores: dict[
@@ -987,6 +1387,43 @@ def _find_historical_baseline(
                 ),
             )
 
+            target_cost_raw = entry.get("target_cost")
+            judge_cost_raw = entry.get("judge_cost")
+            combined_cost_raw = entry.get("combined_cost")
+
+            target_cost = (
+                float(target_cost_raw)
+                if isinstance(
+                    target_cost_raw,
+                    (int, float),
+                )
+                else None
+            )
+
+            judge_cost = (
+                float(judge_cost_raw)
+                if isinstance(
+                    judge_cost_raw,
+                    (int, float),
+                )
+                else None
+            )
+
+            combined_cost = (
+                float(combined_cost_raw)
+                if isinstance(
+                    combined_cost_raw,
+                    (int, float),
+                )
+                else None
+            )
+
+            costs = CostSummary(
+                target_cost=target_cost,
+                judge_cost=judge_cost,
+                combined_cost=combined_cost,
+            )
+
             return RunOutcome(
                 evaluation_name=evaluation_name,
                 evaluation_id=evaluation_id,
@@ -1001,8 +1438,11 @@ def _find_historical_baseline(
                 target_usage=target_usage,
                 judge_usage=judge_usage,
                 combined_usage=combined_usage,
+                costs=costs,
                 gate_threshold=None,
                 gate_passed=gate_passed,
+                metric_gate_results=metric_gate_results,
+                gate_failures=gate_failures,
                 report_path=None,
             )
 
@@ -1024,11 +1464,18 @@ def _execute_single_run(
         dataset_version_id=inputs.dataset_version_id,
         prompt_version_id=inputs.prompt_version_id,
         target=target,
-        metric_plugins=[{"name": metric_name} for metric_name in inputs.metric_names],
+        metric_plugins=[
+            {
+                "name": metric_config.name,
+                "weight": metric_config.weight,
+            }
+            for metric_config in inputs.metric_configs
+        ],
         gate=inputs.gate_config or None,
     )
 
     dataset_loader = CsvDatasetLoader()
+
     load_cases_use_case = LoadCasesFromDatasetUseCase(dataset_loader)
 
     cases = load_cases_use_case.execute(
@@ -1037,7 +1484,9 @@ def _execute_single_run(
     )
 
     run_repository = InMemoryRunRepository()
+
     run_use_case = CreateRunUseCase(run_repository)
+
     run = run_use_case.execute(evaluation.id)
 
     target_executor = build_target_executor(target)
@@ -1072,27 +1521,23 @@ def _execute_single_run(
         judge_usage,
     )
 
-    overall_score = (
-        sum(metric_scores.values()) / len(metric_scores) if metric_scores else 0.0
+    overall_score = _weighted_overall_score(
+        metric_scores,
+        inputs.metric_configs,
     )
 
     latency_ms = (time.perf_counter() - started_at) * 1000
 
-    gate_threshold_raw = inputs.gate_config.get("accuracy")
-
-    gate_threshold: float | None = None
-    gate_passed: bool | None = None
-
-    if gate_threshold_raw is not None:
-        try:
-            gate_threshold = float(gate_threshold_raw)
-        except (
-            TypeError,
-            ValueError,
-        ) as exc:
-            raise ValueError("gate.accuracy must be a number") from exc
-
-        gate_passed = overall_score >= gate_threshold
+    (
+        gate_threshold,
+        gate_passed,
+        metric_gate_results,
+        gate_failures,
+    ) = _evaluate_gates(
+        overall_score=overall_score,
+        metric_scores=metric_scores,
+        gate_config=inputs.gate_config,
+    )
 
     provider = (
         str(
@@ -1116,6 +1561,15 @@ def _execute_single_run(
 
     judge_provider, judge_model = _judge_details(inputs)
 
+    costs = _build_cost_summary(
+        target_provider=provider,
+        target_model=model,
+        target_usage=target_usage,
+        judge_provider=judge_provider,
+        judge_model=judge_model,
+        judge_usage=judge_usage,
+    )
+
     report_path: Path | None = None
 
     if write_report:
@@ -1138,6 +1592,7 @@ def _execute_single_run(
             target_usage=target_usage,
             judge_usage=judge_usage,
             combined_usage=combined_usage,
+            costs=costs,
             gate_threshold=gate_threshold,
             gate_passed=gate_passed,
         )
@@ -1156,8 +1611,11 @@ def _execute_single_run(
         target_usage=target_usage,
         judge_usage=judge_usage,
         combined_usage=combined_usage,
+        costs=costs,
         gate_threshold=gate_threshold,
         gate_passed=gate_passed,
+        metric_gate_results=metric_gate_results,
+        gate_failures=gate_failures,
         report_path=report_path,
     )
 
@@ -1215,7 +1673,8 @@ def run_from_yaml(
                 "dataset_version_id": (inputs.dataset_version_id),
                 "prompt_version_id": (inputs.prompt_version_id),
                 "metric_plugins": [
-                    {"name": metric_name} for metric_name in inputs.metric_names
+                    {"name": metric_config.name}
+                    for metric_config in inputs.metric_configs
                 ],
             },
         )()
@@ -1229,8 +1688,15 @@ def run_from_yaml(
 
     print("Metric Scores:")
 
-    for metric_name in inputs.metric_names:
-        print(f"  {metric_name}: " f"{outcome.metric_scores.get(metric_name, 0.0):.2f}")
+    for metric_config in inputs.metric_configs:
+        metric_name = metric_config.name
+
+        print(
+            f"  {metric_name}: "
+            f"{outcome.metric_scores.get(metric_name, 0.0):.2f}"
+            f" "
+            f"(weight: {metric_config.weight:.2f})"
+        )
 
     print()
     print("Usage")
@@ -1251,19 +1717,46 @@ def run_from_yaml(
     print(f"  Total Tokens: " f"{outcome.combined_usage.total_tokens:,}")
 
     print()
+    print("Estimated API Cost")
+
+    print(f"Target: " f"{_format_cost(outcome.costs.target_cost)}")
+    print(f"Judge: " f"{_format_cost(outcome.costs.judge_cost)}")
+    print(f"Combined: " f"{_format_cost(outcome.costs.combined_cost)}")
+
+    print()
     print(f"Latency: " f"{outcome.latency_ms:.0f} ms")
 
-    if outcome.gate_threshold is None:
+    if outcome.gate_threshold is None and not outcome.metric_gate_results:
         print("Quality Gate: Not configured")
         exit_code = 0
     else:
         gate_status = "PASSED" if outcome.gate_passed else "FAILED"
 
-        print(
-            f"Quality Gate: {gate_status} "
-            f"(threshold: "
-            f"{outcome.gate_threshold:.2f})"
-        )
+        if outcome.gate_threshold is not None:
+            print(
+                f"Quality Gate: {gate_status} "
+                f"(threshold: "
+                f"{outcome.gate_threshold:.2f})"
+            )
+        else:
+            print(f"Quality Gate: " f"{gate_status}")
+
+        if outcome.metric_gate_results:
+            print("Metric Gates:")
+
+            for (
+                metric_name,
+                passed,
+            ) in outcome.metric_gate_results.items():
+                metric_status = "PASSED" if passed else "FAILED"
+
+                print(f"  {metric_name}: " f"{metric_status}")
+
+        if outcome.gate_failures:
+            print("Gate Failures:")
+
+            for failure in outcome.gate_failures:
+                print(f"  {failure}")
 
         exit_code = 0 if outcome.gate_passed else 1
 
@@ -1430,23 +1923,29 @@ def run_from_yaml(
             "prompt_version_id": (inputs.prompt_version_id),
             "metric_name": metric_names_text,
             "metric_names": inputs.metric_names,
+            "metric_weights": {
+                metric_config.name: metric_config.weight
+                for metric_config in inputs.metric_configs
+            },
             "metric_scores": (outcome.metric_scores),
+            "metric_gate_results": (outcome.metric_gate_results),
+            "gate_failures": (outcome.gate_failures),
             "judge_provider": judge_provider,
             "judge_model": judge_model,
             "provider": outcome.provider,
             "model": outcome.model,
-            # Backward-compatible target usage.
             "input_tokens": (outcome.target_usage.input_tokens),
             "output_tokens": (outcome.target_usage.output_tokens),
             "total_tokens": (outcome.target_usage.total_tokens),
-            # Explicit judge usage.
             "judge_input_tokens": (outcome.judge_usage.input_tokens),
             "judge_output_tokens": (outcome.judge_usage.output_tokens),
             "judge_total_tokens": (outcome.judge_usage.total_tokens),
-            # Combined usage.
             "combined_input_tokens": (outcome.combined_usage.input_tokens),
             "combined_output_tokens": (outcome.combined_usage.output_tokens),
             "combined_total_tokens": (outcome.combined_usage.total_tokens),
+            "target_cost": (outcome.costs.target_cost),
+            "judge_cost": (outcome.costs.judge_cost),
+            "combined_cost": (outcome.costs.combined_cost),
             "accuracy": outcome.accuracy,
             "latency_ms": (outcome.latency_ms),
             "gate_threshold": (outcome.gate_threshold),
@@ -1528,7 +2027,7 @@ def compare_from_yaml(
 
     print()
 
-    print(f"Left  ({comparison.left_name}): " f"{comparison.left_accuracy:.2f}")
+    print(f"Left ({comparison.left_name}): " f"{comparison.left_accuracy:.2f}")
 
     print(f"Right ({comparison.right_name}): " f"{comparison.right_accuracy:.2f}")
 
@@ -1562,6 +2061,10 @@ def compare_from_yaml(
             "dataset_version_id": (inputs.dataset_version_id),
             "prompt_version_id": (inputs.prompt_version_id),
             "metric_names": (inputs.metric_names),
+            "metric_weights": {
+                metric_config.name: metric_config.weight
+                for metric_config in inputs.metric_configs
+            },
             "left_name": (f"{left_outcome.provider}:" f"{left_outcome.model}"),
             "right_name": (f"{right_outcome.provider}:" f"{right_outcome.model}"),
             "left_accuracy": (left_outcome.accuracy),
@@ -1575,6 +2078,9 @@ def compare_from_yaml(
             "left_judge_output_tokens": (left_outcome.judge_usage.output_tokens),
             "left_judge_total_tokens": (left_outcome.judge_usage.total_tokens),
             "left_combined_total_tokens": (left_outcome.combined_usage.total_tokens),
+            "left_target_cost": (left_outcome.costs.target_cost),
+            "left_judge_cost": (left_outcome.costs.judge_cost),
+            "left_combined_cost": (left_outcome.costs.combined_cost),
             "right_target_input_tokens": (right_outcome.target_usage.input_tokens),
             "right_target_output_tokens": (right_outcome.target_usage.output_tokens),
             "right_target_total_tokens": (right_outcome.target_usage.total_tokens),
@@ -1582,6 +2088,9 @@ def compare_from_yaml(
             "right_judge_output_tokens": (right_outcome.judge_usage.output_tokens),
             "right_judge_total_tokens": (right_outcome.judge_usage.total_tokens),
             "right_combined_total_tokens": (right_outcome.combined_usage.total_tokens),
+            "right_target_cost": (right_outcome.costs.target_cost),
+            "right_judge_cost": (right_outcome.costs.judge_cost),
+            "right_combined_cost": (right_outcome.costs.combined_cost),
         }
     )
 
@@ -1604,7 +2113,13 @@ def main() -> int:
             dataset_version_id=(args.dataset_version_id),
             prompt_version_id=(args.prompt_version_id),
             target={"provider": args.target},
-            metric_plugins=[{"name": metric_name} for metric_name in metric_names],
+            metric_plugins=[
+                {
+                    "name": metric_name,
+                    "weight": 1.0,
+                }
+                for metric_name in metric_names
+            ],
         )
 
         print_evaluation_summary(evaluation)

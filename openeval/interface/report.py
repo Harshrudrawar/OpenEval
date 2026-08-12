@@ -15,11 +15,25 @@ class TokenUsage:
     total_tokens: int = 0
 
 
+@dataclass(frozen=True)
+class CostSummary:
+    target_cost: float | None = None
+    judge_cost: float | None = None
+    combined_cost: float | None = None
+
+
 def _format_latency(latency_ms: float) -> str:
     if latency_ms >= 1000:
         return f"{latency_ms / 1000:.1f}s"
 
     return f"{latency_ms:.0f} ms"
+
+
+def _format_cost(cost: float | None) -> str:
+    if cost is None:
+        return "N/A"
+
+    return f"${cost:.6f}"
 
 
 def _usage_cards(
@@ -45,6 +59,27 @@ def _usage_cards(
     """
 
 
+def _cost_cards(
+    costs: CostSummary,
+) -> str:
+    return f"""
+      <div class="usage-item">
+        <span class="label">Target Cost</span>
+        <div class="usage-value">{escape(_format_cost(costs.target_cost))}</div>
+      </div>
+
+      <div class="usage-item">
+        <span class="label">Judge Cost</span>
+        <div class="usage-value">{escape(_format_cost(costs.judge_cost))}</div>
+      </div>
+
+      <div class="usage-item">
+        <span class="label">Combined Cost</span>
+        <div class="usage-value">{escape(_format_cost(costs.combined_cost))}</div>
+      </div>
+    """
+
+
 def build_run_report_html(
     *,
     evaluation_name: str,
@@ -64,6 +99,7 @@ def build_run_report_html(
     target_usage: TokenUsage,
     judge_usage: TokenUsage,
     combined_usage: TokenUsage,
+    costs: CostSummary,
     gate_threshold: float | None,
     gate_passed: bool | None,
 ) -> str:
@@ -111,6 +147,8 @@ def build_run_report_html(
         combined_usage,
         prefix="Combined",
     )
+
+    cost_cards = _cost_cards(costs)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -436,6 +474,11 @@ def build_run_report_html(
         <span class="label">Combined Tokens</span>
         <div class="value">{combined_usage.total_tokens:,}</div>
       </div>
+
+      <div class="card">
+        <span class="label">Combined API Cost</span>
+        <div class="value">{escape(_format_cost(costs.combined_cost))}</div>
+      </div>
     </section>
 
     <section class="gate-panel {gate_class}">
@@ -472,6 +515,13 @@ def build_run_report_html(
         <div class="usage-group-title">Combined</div>
         <div class="usage-grid">
           {combined_usage_cards}
+        </div>
+      </div>
+
+      <div class="usage-group">
+        <div class="usage-group-title">Estimated API Cost</div>
+        <div class="usage-grid">
+          {cost_cards}
         </div>
       </div>
     </section>
@@ -782,6 +832,7 @@ def write_run_report(
     target_usage: TokenUsage,
     judge_usage: TokenUsage,
     combined_usage: TokenUsage,
+    costs: CostSummary,
     gate_threshold: float | None,
     gate_passed: bool | None,
 ) -> Path:
@@ -812,6 +863,7 @@ def write_run_report(
             target_usage=target_usage,
             judge_usage=judge_usage,
             combined_usage=combined_usage,
+            costs=costs,
             gate_threshold=gate_threshold,
             gate_passed=gate_passed,
         ),
