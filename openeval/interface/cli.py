@@ -141,6 +141,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write the run result as JSON to this file",
     )
 
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Validate an evaluation YAML file",
+    )
+    validate_parser.add_argument(
+        "config_path",
+        help="Path to evaluation YAML file",
+    )
+
     compare_parser = subparsers.add_parser(
         "compare",
         help="Compare two providers on the same evaluation YAML",
@@ -1901,6 +1910,57 @@ def _print_regression_summary(
     print(f"Result: {status}")
 
 
+def validate_from_yaml(
+    config_path: str,
+) -> int:
+    try:
+        inputs = _load_inputs(config_path)
+
+        configured_metrics = set(inputs.metric_names)
+
+        metric_gate_config = inputs.gate_config.get(
+            "metrics",
+            {},
+        )
+
+        if isinstance(metric_gate_config, dict):
+            unknown_metrics = sorted(
+                {str(name).strip() for name in metric_gate_config} - configured_metrics
+            )
+
+            if unknown_metrics:
+                print("Configuration Error:")
+                print("gate.metrics references " "unknown metric(s):")
+
+                for metric_name in unknown_metrics:
+                    print(f"  {metric_name}")
+
+                print()
+                print("Configured metrics:")
+
+                for metric_name in inputs.metric_names:
+                    print(f"  {metric_name}")
+
+                return 1
+
+        print("✔ Configuration is valid")
+        print(f"Evaluation: {inputs.name}")
+        print(f"Dataset: " f"{inputs.dataset_version_id}")
+        print(f"Prompt: " f"{inputs.prompt_version_id}")
+        print(f"Metrics: " f"{', '.join(inputs.metric_names)}")
+
+        return 0
+
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+    ) as exc:
+        print("Configuration Error:")
+        print(f"  {exc}")
+        return 1
+
+
 def run_from_yaml(
     config_path: str,
     *,
@@ -2498,6 +2558,9 @@ def main() -> int:
             json_output=args.json,
             output_path=args.output,
         )
+
+    if args.command == "validate":
+        return validate_from_yaml(args.config_path)
 
     if args.command == "compare":
         return compare_from_yaml(
