@@ -2,11 +2,20 @@ from pathlib import Path
 
 import pytest
 
-from openeval.interface.cli import _evaluate_gates, _load_inputs
+from openeval.interface.cli import (
+    _evaluate_gates,
+    _load_inputs,
+)
 
 
 def test_metric_gate_passes_when_metric_meets_threshold() -> None:
-    overall_threshold, overall_passed, metric_results, failures = _evaluate_gates(
+    (
+        overall_threshold,
+        overall_passed,
+        metric_results,
+        operational_results,
+        failures,
+    ) = _evaluate_gates(
         overall_score=0.90,
         metric_scores={"llm_judge": 0.85},
         gate_config={
@@ -20,11 +29,18 @@ def test_metric_gate_passes_when_metric_meets_threshold() -> None:
     assert overall_threshold == 0.80
     assert overall_passed is True
     assert metric_results == {"llm_judge": True}
+    assert operational_results == {}
     assert failures == []
 
 
 def test_metric_gate_fails_when_metric_is_below_threshold() -> None:
-    overall_threshold, overall_passed, metric_results, failures = _evaluate_gates(
+    (
+        overall_threshold,
+        overall_passed,
+        metric_results,
+        operational_results,
+        failures,
+    ) = _evaluate_gates(
         overall_score=0.90,
         metric_scores={"llm_judge": 0.72},
         gate_config={
@@ -38,11 +54,18 @@ def test_metric_gate_fails_when_metric_is_below_threshold() -> None:
     assert overall_threshold == 0.80
     assert overall_passed is False
     assert metric_results == {"llm_judge": False}
+    assert operational_results == {}
     assert failures == ["metric:llm_judge"]
 
 
 def test_metric_gate_fails_when_metric_is_missing() -> None:
-    _, overall_passed, metric_results, failures = _evaluate_gates(
+    (
+        _,
+        overall_passed,
+        metric_results,
+        operational_results,
+        failures,
+    ) = _evaluate_gates(
         overall_score=0.90,
         metric_scores={},
         gate_config={
@@ -54,11 +77,18 @@ def test_metric_gate_fails_when_metric_is_missing() -> None:
 
     assert overall_passed is False
     assert metric_results == {"llm_judge": False}
+    assert operational_results == {}
     assert failures == ["metric:llm_judge"]
 
 
 def test_legacy_accuracy_gate_still_works() -> None:
-    overall_threshold, overall_passed, metric_results, failures = _evaluate_gates(
+    (
+        overall_threshold,
+        overall_passed,
+        metric_results,
+        operational_results,
+        failures,
+    ) = _evaluate_gates(
         overall_score=0.85,
         metric_scores={},
         gate_config={
@@ -69,6 +99,7 @@ def test_legacy_accuracy_gate_still_works() -> None:
     assert overall_threshold == 0.80
     assert overall_passed is True
     assert metric_results == {}
+    assert operational_results == {}
     assert failures == []
 
 

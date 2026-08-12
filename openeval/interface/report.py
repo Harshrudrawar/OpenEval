@@ -36,6 +36,26 @@ def _format_cost(cost: float | None) -> str:
     return f"${cost:.6f}"
 
 
+def _format_limit(
+    value: float | int | None,
+    *,
+    kind: str,
+) -> str:
+    if value is None:
+        return "N/A"
+
+    if kind == "latency":
+        return f"{float(value):.0f} ms"
+
+    if kind == "tokens":
+        return f"{int(value):,}"
+
+    if kind == "cost":
+        return f"${float(value):.6f}"
+
+    return str(value)
+
+
 def _usage_cards(
     usage: TokenUsage,
     *,
@@ -65,19 +85,191 @@ def _cost_cards(
     return f"""
       <div class="usage-item">
         <span class="label">Target Cost</span>
-        <div class="usage-value">{escape(_format_cost(costs.target_cost))}</div>
+        <div class="usage-value">
+          {escape(_format_cost(costs.target_cost))}
+        </div>
       </div>
 
       <div class="usage-item">
         <span class="label">Judge Cost</span>
-        <div class="usage-value">{escape(_format_cost(costs.judge_cost))}</div>
+        <div class="usage-value">
+          {escape(_format_cost(costs.judge_cost))}
+        </div>
       </div>
 
       <div class="usage-item">
         <span class="label">Combined Cost</span>
-        <div class="usage-value">{escape(_format_cost(costs.combined_cost))}</div>
+        <div class="usage-value">
+          {escape(_format_cost(costs.combined_cost))}
+        </div>
       </div>
     """
+
+
+def _gate_status_card(
+    name: str,
+    passed: bool,
+) -> str:
+    status = "PASSED" if passed else "FAILED"
+    status_class = "success" if passed else "danger"
+
+    return f"""
+      <div class="gate-item">
+        <div class="gate-item-name">
+          {escape(name)}
+        </div>
+        <div class="gate-item-status {status_class}">
+          {status}
+        </div>
+      </div>
+    """
+
+
+def _build_metric_gate_cards(
+    metric_gate_results: dict[str, bool],
+) -> str:
+    if not metric_gate_results:
+        return """
+          <div class="gate-empty">
+            No per-metric gates configured.
+          </div>
+        """
+
+    return "\n".join(
+        _gate_status_card(
+            metric_name,
+            passed,
+        )
+        for metric_name, passed in metric_gate_results.items()
+    )
+
+
+def _build_operational_gate_cards(
+    operational_gate_results: dict[str, bool],
+    *,
+    latency_ms: float,
+    combined_usage: TokenUsage,
+    costs: CostSummary,
+    gate_config: dict[str, Any],
+) -> str:
+    if not operational_gate_results:
+        return """
+          <div class="gate-empty">
+            No operational gates configured.
+          </div>
+        """
+
+    cards: list[str] = []
+
+    if "latency" in operational_gate_results:
+        max_latency = gate_config.get("max_latency_ms")
+
+        current = f"{latency_ms:.0f} ms"
+        limit = _format_limit(
+            max_latency,
+            kind="latency",
+        )
+
+        passed = operational_gate_results["latency"]
+
+        status = "PASSED" if passed else "FAILED"
+        status_class = "success" if passed else "danger"
+
+        cards.append(f"""
+            <div class="gate-item operational-item">
+              <div>
+                <div class="gate-item-name">
+                  Latency
+                </div>
+                <div class="gate-item-detail">
+                  {escape(current)} / {escape(limit)}
+                </div>
+              </div>
+              <div class="gate-item-status {status_class}">
+                {status}
+              </div>
+            </div>
+            """)
+
+    if "tokens" in operational_gate_results:
+        max_tokens = gate_config.get("max_total_tokens")
+
+        current = f"{combined_usage.total_tokens:,}"
+        limit = _format_limit(
+            max_tokens,
+            kind="tokens",
+        )
+
+        passed = operational_gate_results["tokens"]
+
+        status = "PASSED" if passed else "FAILED"
+        status_class = "success" if passed else "danger"
+
+        cards.append(f"""
+            <div class="gate-item operational-item">
+              <div>
+                <div class="gate-item-name">
+                  Total Tokens
+                </div>
+                <div class="gate-item-detail">
+                  {escape(current)} / {escape(limit)}
+                </div>
+              </div>
+              <div class="gate-item-status {status_class}">
+                {status}
+              </div>
+            </div>
+            """)
+
+    if "cost" in operational_gate_results:
+        max_cost = gate_config.get("max_cost_usd")
+
+        current = _format_cost(costs.combined_cost)
+
+        limit = _format_limit(
+            max_cost,
+            kind="cost",
+        )
+
+        passed = operational_gate_results["cost"]
+
+        status = "PASSED" if passed else "FAILED"
+        status_class = "success" if passed else "danger"
+
+        cards.append(f"""
+            <div class="gate-item operational-item">
+              <div>
+                <div class="gate-item-name">
+                  API Cost
+                </div>
+                <div class="gate-item-detail">
+                  {escape(current)} / {escape(limit)}
+                </div>
+              </div>
+              <div class="gate-item-status {status_class}">
+                {status}
+              </div>
+            </div>
+            """)
+
+    return "\n".join(cards)
+
+
+def _build_gate_failure_cards(
+    gate_failures: list[str],
+) -> str:
+    if not gate_failures:
+        return """
+          <div class="gate-empty">
+            No gate failures.
+          </div>
+        """
+
+    return "\n".join(f"""
+        <div class="failure-item">
+          {escape(failure)}
+        </div>
+        """ for failure in gate_failures)
 
 
 def build_run_report_html(
@@ -102,12 +294,28 @@ def build_run_report_html(
     costs: CostSummary,
     gate_threshold: float | None,
     gate_passed: bool | None,
+    metric_gate_results: dict[str, bool] | None = None,
+    operational_gate_results: dict[str, bool] | None = None,
+    gate_failures: list[str] | None = None,
+    gate_config: dict[str, Any] | None = None,
 ) -> str:
+    metric_gate_results = metric_gate_results or {}
+    operational_gate_results = operational_gate_results or {}
+    gate_failures = gate_failures or []
+    gate_config = gate_config or {}
+
     generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     if gate_threshold is None:
-        gate_display = "Not configured"
-        gate_class = "neutral"
+        if gate_passed is None:
+            gate_display = "Not configured"
+            gate_class = "neutral"
+        elif gate_passed:
+            gate_display = "Passed"
+            gate_class = "success"
+        else:
+            gate_display = "Failed"
+            gate_class = "danger"
     elif gate_passed:
         gate_display = f"Passed ({gate_threshold:.2f})"
         gate_class = "success"
@@ -126,8 +334,12 @@ def build_run_report_html(
 
     metric_cards = "\n".join(f"""
       <div class="card">
-        <span class="label">{escape(metric_name)}</span>
-        <div class="value">{score:.2f}</div>
+        <span class="label">
+          {escape(metric_name)}
+        </span>
+        <div class="value">
+          {score:.2f}
+        </div>
       </div>
     """ for metric_name, score in metric_scores.items())
 
@@ -150,12 +362,28 @@ def build_run_report_html(
 
     cost_cards = _cost_cards(costs)
 
+    metric_gate_cards = _build_metric_gate_cards(metric_gate_results)
+
+    operational_gate_cards = _build_operational_gate_cards(
+        operational_gate_results,
+        latency_ms=latency_ms,
+        combined_usage=combined_usage,
+        costs=costs,
+        gate_config=gate_config,
+    )
+
+    gate_failure_cards = _build_gate_failure_cards(gate_failures)
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  />
   <title>OpenEval Evaluation Report</title>
+
   <style>
     :root {{
       --bg: #f6f8fc;
@@ -178,8 +406,14 @@ def build_run_report_html(
 
     body {{
       margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
-        BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family:
+        Inter,
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
       background: var(--bg);
       color: var(--text);
     }}
@@ -197,11 +431,17 @@ def build_run_report_html(
           rgba(59, 130, 246, 0.45),
           transparent 34%
         ),
-        linear-gradient(135deg, #0f172a 0%, #172554 100%);
+        linear-gradient(
+          135deg,
+          #0f172a 0%,
+          #172554 100%
+        );
       color: white;
       border-radius: 24px;
       padding: 32px;
-      box-shadow: 0 20px 55px rgba(15, 23, 42, 0.2);
+      box-shadow:
+        0 20px 55px
+        rgba(15, 23, 42, 0.2);
       margin-bottom: 22px;
     }}
 
@@ -213,21 +453,26 @@ def build_run_report_html(
 
     .hero p {{
       margin: 0;
-      color: rgba(255, 255, 255, 0.88);
+      color:
+        rgba(255, 255, 255, 0.88);
       font-size: 14px;
     }}
 
     .subtle {{
       margin-top: 10px;
-      color: rgba(255, 255, 255, 0.7);
+      color:
+        rgba(255, 255, 255, 0.7);
       font-size: 13px;
     }}
 
     .badge {{
       display: inline-block;
-      background: rgba(255, 255, 255, 0.12);
+      background:
+        rgba(255, 255, 255, 0.12);
       color: white;
-      border: 1px solid rgba(255, 255, 255, 0.16);
+      border:
+        1px solid
+        rgba(255, 255, 255, 0.16);
       border-radius: 999px;
       padding: 6px 11px;
       font-size: 12px;
@@ -237,17 +482,25 @@ def build_run_report_html(
 
     .summary {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+      grid-template-columns:
+        repeat(
+          auto-fit,
+          minmax(175px, 1fr)
+        );
       gap: 16px;
       margin: 22px 0;
     }}
 
     .card {{
       background: var(--card);
-      border: 1px solid var(--border);
+      border:
+        1px solid
+        var(--border);
       border-radius: 18px;
       padding: 19px;
-      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
+      box-shadow:
+        0 10px 26px
+        rgba(15, 23, 42, 0.05);
     }}
 
     .label {{
@@ -289,13 +542,19 @@ def build_run_report_html(
 
     .meta {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      grid-template-columns:
+        repeat(
+          auto-fit,
+          minmax(230px, 1fr)
+        );
       gap: 12px;
     }}
 
     .meta-item {{
       background: var(--card);
-      border: 1px solid var(--border);
+      border:
+        1px solid
+        var(--border);
       border-radius: 16px;
       padding: 17px;
     }}
@@ -317,7 +576,9 @@ def build_run_report_html(
     .usage {{
       margin-top: 22px;
       background: var(--neutral-soft);
-      border: 1px solid var(--border);
+      border:
+        1px solid
+        var(--border);
       border-radius: 18px;
       padding: 20px;
     }}
@@ -346,13 +607,19 @@ def build_run_report_html(
 
     .usage-grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      grid-template-columns:
+        repeat(
+          auto-fit,
+          minmax(180px, 1fr)
+        );
       gap: 12px;
     }}
 
     .usage-item {{
       background: var(--card);
-      border: 1px solid var(--border);
+      border:
+        1px solid
+        var(--border);
       border-radius: 14px;
       padding: 16px;
     }}
@@ -365,7 +632,9 @@ def build_run_report_html(
     .judge {{
       margin-top: 22px;
       background: var(--accent-soft);
-      border: 1px solid #bfdbfe;
+      border:
+        1px solid
+        #bfdbfe;
       border-radius: 18px;
       padding: 20px;
     }}
@@ -377,13 +646,20 @@ def build_run_report_html(
 
     .judge-grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns:
+        repeat(
+          auto-fit,
+          minmax(200px, 1fr)
+        );
       gap: 12px;
     }}
 
     .judge-item {{
-      background: rgba(255, 255, 255, 0.72);
-      border: 1px solid rgba(37, 99, 235, 0.14);
+      background:
+        rgba(255, 255, 255, 0.72);
+      border:
+        1px solid
+        rgba(37, 99, 235, 0.14);
       border-radius: 14px;
       padding: 14px;
     }}
@@ -395,18 +671,27 @@ def build_run_report_html(
     }}
 
     .gate-panel.success {{
-      background: var(--success-soft);
-      border: 1px solid #bbf7d0;
+      background:
+        var(--success-soft);
+      border:
+        1px solid
+        #bbf7d0;
     }}
 
     .gate-panel.danger {{
-      background: var(--danger-soft);
-      border: 1px solid #fecaca;
+      background:
+        var(--danger-soft);
+      border:
+        1px solid
+        #fecaca;
     }}
 
     .gate-panel.neutral {{
-      background: var(--neutral-soft);
-      border: 1px solid var(--border);
+      background:
+        var(--neutral-soft);
+      border:
+        1px solid
+        var(--border);
     }}
 
     .gate-title {{
@@ -422,6 +707,93 @@ def build_run_report_html(
       font-weight: 750;
     }}
 
+    .gate-section {{
+      margin-top: 14px;
+    }}
+
+    .gate-section-title {{
+      font-size: 12px;
+      font-weight: 750;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 9px;
+    }}
+
+    .gate-grid {{
+      display: grid;
+      grid-template-columns:
+        repeat(
+          auto-fit,
+          minmax(220px, 1fr)
+        );
+      gap: 10px;
+    }}
+
+    .gate-item {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: var(--card);
+      border:
+        1px solid
+        var(--border);
+      border-radius: 14px;
+      padding: 14px 15px;
+    }}
+
+    .operational-item {{
+      align-items: flex-start;
+    }}
+
+    .gate-item-name {{
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }}
+
+    .gate-item-detail {{
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }}
+
+    .gate-item-status {{
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }}
+
+    .gate-empty {{
+      color: var(--muted);
+      font-size: 13px;
+      background: var(--card);
+      border:
+        1px solid
+        var(--border);
+      border-radius: 14px;
+      padding: 14px;
+    }}
+
+    .failure-panel {{
+      margin-top: 14px;
+      background:
+        var(--danger-soft);
+      border:
+        1px solid
+        #fecaca;
+      border-radius: 14px;
+      padding: 14px;
+    }}
+
+    .failure-item {{
+      color:
+        var(--danger);
+      font-size: 13px;
+      font-weight: 650;
+      padding: 4px 0;
+    }}
+
     .footer {{
       margin-top: 26px;
       color: var(--muted);
@@ -430,64 +802,150 @@ def build_run_report_html(
     }}
   </style>
 </head>
+
 <body>
   <main class="container">
+
     <section class="hero">
-      <div class="badge">OpenEval Evaluation Report</div>
-      <h1>{escape(evaluation_name)}</h1>
+      <div class="badge">
+        OpenEval Evaluation Report
+      </div>
+
+      <h1>
+        {escape(evaluation_name)}
+      </h1>
+
       <p>
         Run ID: {escape(run_id)}
-        · Evaluation ID: {escape(evaluation_id)}
+        · Evaluation ID:
+        {escape(evaluation_id)}
       </p>
+
       <div class="subtle">
         Generated at {escape(generated_at)}
       </div>
     </section>
 
     <section class="summary">
+
       <div class="card">
-        <span class="label">Overall Score</span>
-        <div class="value">{overall_score:.2f}</div>
+        <span class="label">
+          Overall Score
+        </span>
+        <div class="value">
+          {overall_score:.2f}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Target</span>
-        <div class="value">{escape(target_display)}</div>
+        <span class="label">
+          Target
+        </span>
+        <div class="value">
+          {escape(target_display)}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Latency</span>
-        <div class="value">{escape(latency_display)}</div>
+        <span class="label">
+          Latency
+        </span>
+        <div class="value">
+          {escape(latency_display)}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Cases</span>
-        <div class="value">{cases_count}</div>
+        <span class="label">
+          Cases
+        </span>
+        <div class="value">
+          {cases_count}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Metric Count</span>
-        <div class="value">{len(metric_scores)}</div>
+        <span class="label">
+          Metric Count
+        </span>
+        <div class="value">
+          {len(metric_scores)}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Combined Tokens</span>
-        <div class="value">{combined_usage.total_tokens:,}</div>
+        <span class="label">
+          Combined Tokens
+        </span>
+        <div class="value">
+          {combined_usage.total_tokens:,}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Combined API Cost</span>
-        <div class="value">{escape(_format_cost(costs.combined_cost))}</div>
+        <span class="label">
+          Combined API Cost
+        </span>
+        <div class="value">
+          {escape(
+              _format_cost(
+                  costs.combined_cost
+              )
+          )}
+        </div>
       </div>
+
     </section>
 
     <section class="gate-panel {gate_class}">
-      <div class="gate-title">Quality Gate</div>
-      <div class="gate-value">{escape(gate_display)}</div>
+      <div class="gate-title">
+        Quality Gate
+      </div>
+
+      <div class="gate-value">
+        {escape(gate_display)}
+      </div>
+
+      <div class="gate-section">
+        <div class="gate-section-title">
+          Metric Gates
+        </div>
+
+        <div class="gate-grid">
+          {metric_gate_cards}
+        </div>
+      </div>
+
+      <div class="gate-section">
+        <div class="gate-section-title">
+          Operational Gates
+        </div>
+
+        <div class="gate-grid">
+          {operational_gate_cards}
+        </div>
+      </div>
+
+      {
+        f'''
+        <div class="failure-panel">
+          <div class="gate-section-title">
+            Gate Failures
+          </div>
+
+          {gate_failure_cards}
+        </div>
+        '''
+        if gate_failures
+        else ""
+      }
+
     </section>
 
     <section class="section">
-      <h2>Metric Scores</h2>
+      <h2>
+        Metric Scores
+      </h2>
 
       <div class="summary">
         {metric_cards}
@@ -495,31 +953,45 @@ def build_run_report_html(
     </section>
 
     <section class="usage">
-      <h2>Token Usage</h2>
+      <h2>
+        Token Usage
+      </h2>
 
       <div class="usage-group">
-        <div class="usage-group-title">Target</div>
+        <div class="usage-group-title">
+          Target
+        </div>
+
         <div class="usage-grid">
           {target_usage_cards}
         </div>
       </div>
 
       <div class="usage-group">
-        <div class="usage-group-title">Judge</div>
+        <div class="usage-group-title">
+          Judge
+        </div>
+
         <div class="usage-grid">
           {judge_usage_cards}
         </div>
       </div>
 
       <div class="usage-group">
-        <div class="usage-group-title">Combined</div>
+        <div class="usage-group-title">
+          Combined
+        </div>
+
         <div class="usage-grid">
           {combined_usage_cards}
         </div>
       </div>
 
       <div class="usage-group">
-        <div class="usage-group-title">Estimated API Cost</div>
+        <div class="usage-group-title">
+          Estimated API Cost
+        </div>
+
         <div class="usage-grid">
           {cost_cards}
         </div>
@@ -527,65 +999,113 @@ def build_run_report_html(
     </section>
 
     <section class="section">
-      <h2>Evaluation Details</h2>
+      <h2>
+        Evaluation Details
+      </h2>
 
       <div class="meta">
+
         <div class="meta-item">
-          <div class="meta-key">Dataset Version</div>
-          <div class="meta-value">{escape(dataset_version)}</div>
+          <div class="meta-key">
+            Dataset Version
+          </div>
+          <div class="meta-value">
+            {escape(dataset_version)}
+          </div>
         </div>
 
         <div class="meta-item">
-          <div class="meta-key">Prompt Version</div>
-          <div class="meta-value">{escape(prompt_version)}</div>
+          <div class="meta-key">
+            Prompt Version
+          </div>
+          <div class="meta-value">
+            {escape(prompt_version)}
+          </div>
         </div>
 
         <div class="meta-item">
-          <div class="meta-key">Provider</div>
-          <div class="meta-value">{escape(provider)}</div>
+          <div class="meta-key">
+            Provider
+          </div>
+          <div class="meta-value">
+            {escape(provider)}
+          </div>
         </div>
 
         <div class="meta-item">
-          <div class="meta-key">Model</div>
-          <div class="meta-value">{escape(model)}</div>
+          <div class="meta-key">
+            Model
+          </div>
+          <div class="meta-value">
+            {escape(model)}
+          </div>
         </div>
 
         <div class="meta-item">
-          <div class="meta-key">Metrics</div>
-          <div class="meta-value">{escape(metrics_display)}</div>
+          <div class="meta-key">
+            Metrics
+          </div>
+          <div class="meta-value">
+            {escape(metrics_display)}
+          </div>
         </div>
 
         <div class="meta-item">
-          <div class="meta-key">Case Results</div>
-          <div class="meta-value">{case_results_count}</div>
+          <div class="meta-key">
+            Case Results
+          </div>
+          <div class="meta-value">
+            {case_results_count}
+          </div>
         </div>
 
         <div class="meta-item">
-          <div class="meta-key">Status</div>
-          <div class="meta-value success">Completed</div>
+          <div class="meta-key">
+            Status
+          </div>
+          <div class="meta-value success">
+            Completed
+          </div>
         </div>
+
       </div>
     </section>
 
     <section class="judge">
-      <h2>Evaluation Strategy</h2>
+      <h2>
+        Evaluation Strategy
+      </h2>
 
       <div class="judge-grid">
+
         <div class="judge-item">
-          <div class="meta-key">Metric Set</div>
-          <div class="meta-value">{escape(metrics_display)}</div>
+          <div class="meta-key">
+            Metric Set
+          </div>
+
+          <div class="meta-value">
+            {escape(metrics_display)}
+          </div>
         </div>
 
         <div class="judge-item">
-          <div class="meta-key">Judge</div>
-          <div class="meta-value">{escape(judge_display)}</div>
+          <div class="meta-key">
+            Judge
+          </div>
+
+          <div class="meta-value">
+            {escape(judge_display)}
+          </div>
         </div>
+
       </div>
     </section>
 
     <div class="footer">
-      Built with OpenEval · Reproducible AI quality evaluation
+      Built with OpenEval ·
+      Reproducible AI quality evaluation
     </div>
+
   </main>
 </body>
 </html>
@@ -611,8 +1131,14 @@ def build_comparison_report_html(
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OpenEval Comparison Report</title>
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  />
+  <title>
+    OpenEval Comparison Report
+  </title>
+
   <style>
     :root {{
       --bg: #f6f8fc;
@@ -630,8 +1156,14 @@ def build_comparison_report_html(
 
     body {{
       margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
-        BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family:
+        Inter,
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
       background: var(--bg);
       color: var(--text);
     }}
@@ -643,11 +1175,18 @@ def build_comparison_report_html(
     }}
 
     .hero {{
-      background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+      background:
+        linear-gradient(
+          135deg,
+          #0f172a 0%,
+          #1e3a8a 100%
+        );
       color: white;
       border-radius: 24px;
       padding: 28px;
-      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+      box-shadow:
+        0 18px 50px
+        rgba(15, 23, 42, 0.18);
       margin-bottom: 20px;
     }}
 
@@ -659,29 +1198,39 @@ def build_comparison_report_html(
 
     .hero p {{
       margin: 0;
-      color: rgba(255, 255, 255, 0.88);
+      color:
+        rgba(255, 255, 255, 0.88);
       font-size: 15px;
     }}
 
     .subtle {{
       margin-top: 10px;
-      color: rgba(255, 255, 255, 0.75);
+      color:
+        rgba(255, 255, 255, 0.75);
       font-size: 13px;
     }}
 
     .grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      grid-template-columns:
+        repeat(
+          auto-fit,
+          minmax(220px, 1fr)
+        );
       gap: 16px;
       margin: 20px 0;
     }}
 
     .card {{
       background: var(--card);
-      border: 1px solid var(--border);
+      border:
+        1px solid
+        var(--border);
       border-radius: 18px;
       padding: 18px;
-      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
+      box-shadow:
+        0 10px 26px
+        rgba(15, 23, 42, 0.05);
     }}
 
     .label {{
@@ -709,38 +1258,14 @@ def build_comparison_report_html(
       text-align: center;
     }}
 
-    .meta {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 12px;
-      margin-top: 18px;
-    }}
-
-    .meta-item {{
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 16px;
-    }}
-
-    .meta-key {{
-      font-size: 12px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 8px;
-    }}
-
-    .meta-value {{
-      font-weight: 600;
-      overflow-wrap: anywhere;
-    }}
-
     .badge {{
       display: inline-block;
-      background: rgba(255, 255, 255, 0.12);
+      background:
+        rgba(255, 255, 255, 0.12);
       color: white;
-      border: 1px solid rgba(255, 255, 255, 0.15);
+      border:
+        1px solid
+        rgba(255, 255, 255, 0.15);
       border-radius: 999px;
       padding: 6px 10px;
       font-size: 12px;
@@ -748,64 +1273,121 @@ def build_comparison_report_html(
     }}
   </style>
 </head>
+
 <body>
   <main class="container">
+
     <section class="hero">
-      <div class="badge">OpenEval Comparison Report</div>
-      <h1>{escape(evaluation_name)}</h1>
-      <p>Evaluation ID: {escape(evaluation_id)}</p>
+      <div class="badge">
+        OpenEval Comparison Report
+      </div>
+
+      <h1>
+        {escape(evaluation_name)}
+      </h1>
+
+      <p>
+        Evaluation ID:
+        {escape(evaluation_id)}
+      </p>
+
       <div class="subtle">
         Generated at {escape(generated_at)}
       </div>
     </section>
 
     <section class="grid">
+
       <div class="card">
-        <span class="label">Left Provider</span>
-        <div class="value">{escape(left_name)}</div>
+        <span class="label">
+          Left Provider
+        </span>
+
+        <div class="value">
+          {escape(left_name)}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Right Provider</span>
-        <div class="value">{escape(right_name)}</div>
+        <span class="label">
+          Right Provider
+        </span>
+
+        <div class="value">
+          {escape(right_name)}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Winner</span>
-        <div class="value winner">{escape(winner)}</div>
+        <span class="label">
+          Winner
+        </span>
+
+        <div class="value winner">
+          {escape(winner)}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Margin</span>
-        <div class="value">{margin:.2f}</div>
+        <span class="label">
+          Margin
+        </span>
+
+        <div class="value">
+          {margin:.2f}
+        </div>
       </div>
+
     </section>
 
     <section class="grid">
+
       <div class="card">
-        <span class="label">Left Accuracy</span>
-        <div class="value">{left_accuracy:.2f}</div>
+        <span class="label">
+          Left Accuracy
+        </span>
+
+        <div class="value">
+          {left_accuracy:.2f}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Right Accuracy</span>
-        <div class="value">{right_accuracy:.2f}</div>
+        <span class="label">
+          Right Accuracy
+        </span>
+
+        <div class="value">
+          {right_accuracy:.2f}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Dataset Version</span>
-        <div class="value">{escape(dataset_version)}</div>
+        <span class="label">
+          Dataset Version
+        </span>
+
+        <div class="value">
+          {escape(dataset_version)}
+        </div>
       </div>
 
       <div class="card">
-        <span class="label">Prompt Version</span>
-        <div class="value">{escape(prompt_version)}</div>
+        <span class="label">
+          Prompt Version
+        </span>
+
+        <div class="value">
+          {escape(prompt_version)}
+        </div>
       </div>
+
     </section>
 
     <div class="footer">
       Built with OpenEval
     </div>
+
   </main>
 </body>
 </html>
@@ -835,6 +1417,10 @@ def write_run_report(
     costs: CostSummary,
     gate_threshold: float | None,
     gate_passed: bool | None,
+    metric_gate_results: dict[str, bool] | None = None,
+    operational_gate_results: dict[str, bool] | None = None,
+    gate_failures: list[str] | None = None,
+    gate_config: dict[str, Any] | None = None,
 ) -> Path:
     out_dir = Path(output_dir)
     out_dir.mkdir(
@@ -866,6 +1452,10 @@ def write_run_report(
             costs=costs,
             gate_threshold=gate_threshold,
             gate_passed=gate_passed,
+            metric_gate_results=metric_gate_results,
+            operational_gate_results=(operational_gate_results),
+            gate_failures=gate_failures,
+            gate_config=gate_config,
         ),
         encoding="utf-8",
     )
@@ -922,6 +1512,7 @@ def append_run_history(
     history_path: str | Path = RUN_HISTORY_PATH,
 ) -> Path:
     path = Path(history_path)
+
     path.parent.mkdir(
         parents=True,
         exist_ok=True,

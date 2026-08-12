@@ -81,6 +81,7 @@ class RunOutcome:
     gate_threshold: float | None
     gate_passed: bool | None
     metric_gate_results: dict[str, bool]
+    operational_gate_results: dict[str, bool]
     gate_failures: list[str]
     report_path: Path | None
 
@@ -492,9 +493,13 @@ def _evaluate_gates(
     overall_score: float,
     metric_scores: dict[str, float],
     gate_config: dict[str, Any],
+    latency_ms: float | None = None,
+    total_tokens: int | None = None,
+    combined_cost: float | None = None,
 ) -> tuple[
     float | None,
     bool | None,
+    dict[str, bool],
     dict[str, bool],
     list[str],
 ]:
@@ -502,6 +507,7 @@ def _evaluate_gates(
         return (
             None,
             None,
+            {},
             {},
             [],
         )
@@ -581,11 +587,119 @@ def _evaluate_gates(
             )
         )
 
+    operational_gate_results: dict[str, bool] = {}
+
+    max_latency_raw = gate_config.get("max_latency_ms")
+
+    if max_latency_raw is not None:
+        if isinstance(
+            max_latency_raw,
+            bool,
+        ):
+            raise ValueError(
+                "gate.max_latency_ms must be a number greater than or equal to 0"
+            )
+
+        try:
+            max_latency_ms = float(max_latency_raw)
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise ValueError(
+                "gate.max_latency_ms must be a number greater than or equal to 0"
+            ) from exc
+
+        if max_latency_ms < 0:
+            raise ValueError("gate.max_latency_ms must be greater than or equal to 0")
+
+        latency_passed = latency_ms is not None and latency_ms <= max_latency_ms
+
+        operational_gate_results["latency"] = latency_passed
+
+        checks.append(
+            (
+                "latency",
+                latency_passed,
+            )
+        )
+
+    max_tokens_raw = gate_config.get("max_total_tokens")
+
+    if max_tokens_raw is not None:
+        if isinstance(
+            max_tokens_raw,
+            bool,
+        ):
+            raise ValueError(
+                "gate.max_total_tokens must be an integer greater than or equal to 0"
+            )
+
+        try:
+            max_total_tokens = int(max_tokens_raw)
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise ValueError(
+                "gate.max_total_tokens must be an integer greater than or equal to 0"
+            ) from exc
+
+        if max_total_tokens < 0:
+            raise ValueError("gate.max_total_tokens must be greater than or equal to 0")
+
+        tokens_passed = total_tokens is not None and total_tokens <= max_total_tokens
+
+        operational_gate_results["tokens"] = tokens_passed
+
+        checks.append(
+            (
+                "tokens",
+                tokens_passed,
+            )
+        )
+
+    max_cost_raw = gate_config.get("max_cost_usd")
+
+    if max_cost_raw is not None:
+        if isinstance(
+            max_cost_raw,
+            bool,
+        ):
+            raise ValueError(
+                "gate.max_cost_usd must be a number greater than or equal to 0"
+            )
+
+        try:
+            max_cost_usd = float(max_cost_raw)
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise ValueError(
+                "gate.max_cost_usd must be a number greater than or equal to 0"
+            ) from exc
+
+        if max_cost_usd < 0:
+            raise ValueError("gate.max_cost_usd must be greater than or equal to 0")
+
+        cost_passed = combined_cost is not None and combined_cost <= max_cost_usd
+
+        operational_gate_results["cost"] = cost_passed
+
+        checks.append(
+            (
+                "cost",
+                cost_passed,
+            )
+        )
+
     if not checks:
         return (
             None,
             None,
             metric_gate_results,
+            operational_gate_results,
             [],
         )
 
@@ -595,6 +709,7 @@ def _evaluate_gates(
         gate_threshold,
         not failures,
         metric_gate_results,
+        operational_gate_results,
         failures,
     )
 
@@ -692,23 +807,41 @@ def history_from_jsonl(
             print(f"  Judge: " f"{_format_cost(entry.get('judge_cost'))}")
             print(f"  Combined: " f"{_format_cost(entry.get('combined_cost'))}")
 
-            gate_results = entry.get(
+            metric_gate_results = entry.get(
                 "metric_gate_results",
                 {},
             )
 
             if (
                 isinstance(
-                    gate_results,
+                    metric_gate_results,
                     dict,
                 )
-                and gate_results
+                and metric_gate_results
             ):
                 print("Metric Gates")
 
-                for metric_name, passed in gate_results.items():
+                for metric_name, passed in metric_gate_results.items():
                     status = "PASSED" if passed else "FAILED"
                     print(f"  {metric_name}: " f"{status}")
+
+            operational_gate_results = entry.get(
+                "operational_gate_results",
+                {},
+            )
+
+            if (
+                isinstance(
+                    operational_gate_results,
+                    dict,
+                )
+                and operational_gate_results
+            ):
+                print("Operational Gates")
+
+                for gate_name, passed in operational_gate_results.items():
+                    status = "PASSED" if passed else "FAILED"
+                    print(f"  {gate_name}: " f"{status}")
 
             gate_failures = entry.get(
                 "gate_failures",
@@ -1133,6 +1266,7 @@ def _find_historical_baseline(
     model: str,
 ) -> RunOutcome | None:
     entries = _load_history_entries()
+
     expected_metric_key = _metric_key(inputs.metric_names)
 
     for entry in reversed(entries):
@@ -1272,6 +1406,30 @@ def _find_historical_baseline(
                     ):
                         metric_gate_results[key] = value
 
+            operational_gate_results_raw = entry.get(
+                "operational_gate_results",
+                {},
+            )
+
+            operational_gate_results: dict[
+                str,
+                bool,
+            ] = {}
+
+            if isinstance(
+                operational_gate_results_raw,
+                dict,
+            ):
+                for key, value in operational_gate_results_raw.items():
+                    if isinstance(
+                        key,
+                        str,
+                    ) and isinstance(
+                        value,
+                        bool,
+                    ):
+                        operational_gate_results[key] = value
+
             gate_failures_raw = entry.get(
                 "gate_failures",
                 [],
@@ -1365,7 +1523,7 @@ def _find_historical_baseline(
                     _read_non_negative_int(
                         entry.get(
                             "combined_input_tokens",
-                            target_usage.input_tokens + judge_usage.input_tokens,
+                            (target_usage.input_tokens + judge_usage.input_tokens),
                         )
                     )
                 ),
@@ -1373,7 +1531,7 @@ def _find_historical_baseline(
                     _read_non_negative_int(
                         entry.get(
                             "combined_output_tokens",
-                            target_usage.output_tokens + judge_usage.output_tokens,
+                            (target_usage.output_tokens + judge_usage.output_tokens),
                         )
                     )
                 ),
@@ -1381,7 +1539,7 @@ def _find_historical_baseline(
                     _read_non_negative_int(
                         entry.get(
                             "combined_total_tokens",
-                            target_usage.total_tokens + judge_usage.total_tokens,
+                            (target_usage.total_tokens + judge_usage.total_tokens),
                         )
                     )
                 ),
@@ -1442,6 +1600,7 @@ def _find_historical_baseline(
                 gate_threshold=None,
                 gate_passed=gate_passed,
                 metric_gate_results=metric_gate_results,
+                operational_gate_results=(operational_gate_results),
                 gate_failures=gate_failures,
                 report_path=None,
             )
@@ -1528,17 +1687,6 @@ def _execute_single_run(
 
     latency_ms = (time.perf_counter() - started_at) * 1000
 
-    (
-        gate_threshold,
-        gate_passed,
-        metric_gate_results,
-        gate_failures,
-    ) = _evaluate_gates(
-        overall_score=overall_score,
-        metric_scores=metric_scores,
-        gate_config=inputs.gate_config,
-    )
-
     provider = (
         str(
             target.get(
@@ -1570,6 +1718,21 @@ def _execute_single_run(
         judge_usage=judge_usage,
     )
 
+    (
+        gate_threshold,
+        gate_passed,
+        metric_gate_results,
+        operational_gate_results,
+        gate_failures,
+    ) = _evaluate_gates(
+        overall_score=overall_score,
+        metric_scores=metric_scores,
+        gate_config=inputs.gate_config,
+        latency_ms=latency_ms,
+        total_tokens=combined_usage.total_tokens,
+        combined_cost=costs.combined_cost,
+    )
+
     report_path: Path | None = None
 
     if write_report:
@@ -1595,6 +1758,10 @@ def _execute_single_run(
             costs=costs,
             gate_threshold=gate_threshold,
             gate_passed=gate_passed,
+            metric_gate_results=metric_gate_results,
+            operational_gate_results=(operational_gate_results),
+            gate_failures=gate_failures,
+            gate_config=inputs.gate_config,
         )
 
     return RunOutcome(
@@ -1615,6 +1782,7 @@ def _execute_single_run(
         gate_threshold=gate_threshold,
         gate_passed=gate_passed,
         metric_gate_results=metric_gate_results,
+        operational_gate_results=(operational_gate_results),
         gate_failures=gate_failures,
         report_path=report_path,
     )
@@ -1726,7 +1894,9 @@ def run_from_yaml(
     print()
     print(f"Latency: " f"{outcome.latency_ms:.0f} ms")
 
-    if outcome.gate_threshold is None and not outcome.metric_gate_results:
+    gate_configured = bool(inputs.gate_config)
+
+    if not gate_configured:
         print("Quality Gate: Not configured")
         exit_code = 0
     else:
@@ -1751,6 +1921,50 @@ def run_from_yaml(
                 metric_status = "PASSED" if passed else "FAILED"
 
                 print(f"  {metric_name}: " f"{metric_status}")
+
+        if outcome.operational_gate_results:
+            print("Operational Gates:")
+
+            if "latency" in outcome.operational_gate_results:
+                max_latency_ms = float(inputs.gate_config["max_latency_ms"])
+                status = (
+                    "PASSED"
+                    if outcome.operational_gate_results["latency"]
+                    else "FAILED"
+                )
+
+                print(
+                    f"  Latency: {status} "
+                    f"({outcome.latency_ms:.0f} / "
+                    f"{max_latency_ms:.0f} ms)"
+                )
+
+            if "tokens" in outcome.operational_gate_results:
+                max_total_tokens = int(inputs.gate_config["max_total_tokens"])
+                status = (
+                    "PASSED" if outcome.operational_gate_results["tokens"] else "FAILED"
+                )
+
+                print(
+                    f"  Total Tokens: {status} "
+                    f"({outcome.combined_usage.total_tokens:,} / "
+                    f"{max_total_tokens:,})"
+                )
+
+            if "cost" in outcome.operational_gate_results:
+                max_cost_usd = float(inputs.gate_config["max_cost_usd"])
+
+                status = (
+                    "PASSED" if outcome.operational_gate_results["cost"] else "FAILED"
+                )
+
+                actual_cost = _format_cost(outcome.costs.combined_cost)
+
+                print(
+                    f"  API Cost: {status} "
+                    f"({actual_cost} / "
+                    f"${max_cost_usd:.6f})"
+                )
 
         if outcome.gate_failures:
             print("Gate Failures:")
@@ -1929,6 +2143,7 @@ def run_from_yaml(
             },
             "metric_scores": (outcome.metric_scores),
             "metric_gate_results": (outcome.metric_gate_results),
+            "operational_gate_results": (outcome.operational_gate_results),
             "gate_failures": (outcome.gate_failures),
             "judge_provider": judge_provider,
             "judge_model": judge_model,
