@@ -4,6 +4,7 @@ import argparse
 import json
 import time
 from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -92,7 +93,15 @@ class RunOutcome:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="openeval")
+    parser = argparse.ArgumentParser(
+        prog="openeval",
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"openeval {version('openeval')}",
+    )
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
