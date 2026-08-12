@@ -15,6 +15,7 @@ from openeval.application import (
     LoadCasesFromDatasetUseCase,
 )
 from openeval.application.comparison_use_cases import CompareScoresUseCase
+from openeval.application.run_use_cases import UpdateRunStatusUseCase
 from openeval.domain.cases import CaseResult
 from openeval.domain.plugins import MetricPlugin
 from openeval.domain.scoring import Score
@@ -83,6 +84,10 @@ class RunOutcome:
     metric_gate_results: dict[str, bool]
     operational_gate_results: dict[str, bool]
     gate_failures: list[str]
+    run_status: str
+    completed_cases_count: int
+    failed_cases_count: int
+    failed_cases: list[dict[str, str]]
     report_path: Path | None
 
 
@@ -1602,6 +1607,22 @@ def _find_historical_baseline(
                 metric_gate_results=metric_gate_results,
                 operational_gate_results=(operational_gate_results),
                 gate_failures=gate_failures,
+                run_status=str(entry.get("run_status", "completed")),
+                completed_cases_count=_read_non_negative_int(
+                    entry.get("completed_cases_count", 0)
+                ),
+                failed_cases_count=_read_non_negative_int(
+                    entry.get("failed_cases_count", 0)
+                ),
+                failed_cases=[
+                    {
+                        "case_id": str(item.get("case_id", "")),
+                        "error_type": str(item.get("error_type", "")),
+                        "error_message": str(item.get("error_message", "")),
+                    }
+                    for item in entry.get("failed_cases", [])
+                    if isinstance(item, dict) and str(item.get("case_id", "")).strip()
+                ],
                 report_path=None,
             )
 
@@ -1617,7 +1638,6 @@ def _execute_single_run(
     started_at = time.perf_counter()
 
     evaluation_use_case = create_use_case()
-
     evaluation = evaluation_use_case.execute(
         name=inputs.name,
         dataset_version_id=inputs.dataset_version_id,
@@ -1634,79 +1654,54 @@ def _execute_single_run(
     )
 
     dataset_loader = CsvDatasetLoader()
-
     load_cases_use_case = LoadCasesFromDatasetUseCase(dataset_loader)
-
     cases = load_cases_use_case.execute(
         dataset_path=inputs.dataset_path,
         evaluation_definition_id=evaluation.id,
     )
 
     run_repository = InMemoryRunRepository()
-
     run_use_case = CreateRunUseCase(run_repository)
-
+    status_use_case = UpdateRunStatusUseCase(run_repository)
     run = run_use_case.execute(evaluation.id)
+    status_use_case.execute(run, "running")
 
     target_executor = build_target_executor(target)
-
     execute_cases_use_case = ExecuteCasesUseCase(target_executor)
+    case_results = execute_cases_use_case.execute(cases, run.id)
 
-    case_results = execute_cases_use_case.execute(
-        cases,
-        run.id,
-    )
+    completed_results = [
+        result for result in case_results if result.status == "completed"
+    ]
+    failed_results = [result for result in case_results if result.status == "failed"]
+
+    failed_cases = [
+        {
+            "case_id": result.case_id,
+            "error_type": str(result.metadata.get("error_type", "ExecutionError")),
+            "error_message": str(
+                result.metadata.get("error_message", "Case execution failed")
+            ),
+        }
+        for result in failed_results
+    ]
+
+    run_status = "failed" if failed_results else "completed"
+    status_use_case.execute(run, run_status)
 
     target_usage = _aggregate_target_usage(case_results)
-
     metric_plugins = _metric_plugins_for_inputs(inputs)
-
     score_use_case = EvaluateCaseResultsUseCase(metric_plugins)
-
-    scores = score_use_case.execute(
-        case_results,
-        case_results,
-    )
-
-    metric_scores = _score_by_metric(
-        scores,
-        inputs.metric_names,
-    )
+    scores = score_use_case.execute(case_results, case_results)
+    metric_scores = _score_by_metric(scores, inputs.metric_names)
 
     judge_usage = _aggregate_judge_usage(metric_plugins)
-
-    combined_usage = _add_usage(
-        target_usage,
-        judge_usage,
-    )
-
-    overall_score = _weighted_overall_score(
-        metric_scores,
-        inputs.metric_configs,
-    )
-
+    combined_usage = _add_usage(target_usage, judge_usage)
+    overall_score = _weighted_overall_score(metric_scores, inputs.metric_configs)
     latency_ms = (time.perf_counter() - started_at) * 1000
 
-    provider = (
-        str(
-            target.get(
-                "provider",
-                "mock",
-            )
-        ).strip()
-        or "mock"
-    )
-
-    model = (
-        str(
-            target.get(
-                "model",
-                "unknown",
-            )
-        ).strip()
-        or "unknown"
-    )
-
+    provider = str(target.get("provider", "mock")).strip() or "mock"
+    model = str(target.get("model", "unknown")).strip() or "unknown"
     judge_provider, judge_model = _judge_details(inputs)
 
     costs = _build_cost_summary(
@@ -1733,16 +1728,15 @@ def _execute_single_run(
         combined_cost=costs.combined_cost,
     )
 
-    report_path: Path | None = None
-
+    report_path = None
     if write_report:
         report_path = write_run_report(
             "reports",
             evaluation_name=evaluation.name,
             evaluation_id=evaluation.id,
             run_id=run.id,
-            dataset_version=(inputs.dataset_version_id),
-            prompt_version=(inputs.prompt_version_id),
+            dataset_version=inputs.dataset_version_id,
+            prompt_version=inputs.prompt_version_id,
             provider=provider,
             model=model,
             metric_scores=metric_scores,
@@ -1759,7 +1753,7 @@ def _execute_single_run(
             gate_threshold=gate_threshold,
             gate_passed=gate_passed,
             metric_gate_results=metric_gate_results,
-            operational_gate_results=(operational_gate_results),
+            operational_gate_results=operational_gate_results,
             gate_failures=gate_failures,
             gate_config=inputs.gate_config,
         )
@@ -1782,8 +1776,12 @@ def _execute_single_run(
         gate_threshold=gate_threshold,
         gate_passed=gate_passed,
         metric_gate_results=metric_gate_results,
-        operational_gate_results=(operational_gate_results),
+        operational_gate_results=operational_gate_results,
         gate_failures=gate_failures,
+        run_status=run_status,
+        completed_cases_count=len(completed_results),
+        failed_cases_count=len(failed_results),
+        failed_cases=failed_cases,
         report_path=report_path,
     )
 
@@ -1851,7 +1849,20 @@ def run_from_yaml(
     print()
     print(f"Loaded {outcome.cases_count} cases")
     print(f"Created {outcome.case_results_count} " f"case results")
+    print(f"Completed Cases: {outcome.completed_cases_count}")
+    print(f"Failed Cases: {outcome.failed_cases_count}")
 
+    if outcome.failed_cases:
+        print()
+        print("Failed Cases:")
+        for failed_case in outcome.failed_cases:
+            print(
+                f"  {failed_case['case_id']}: "
+                f"{failed_case['error_type']}: "
+                f"{failed_case['error_message']}"
+            )
+
+    print()
     print(f"Overall Score: " f"{outcome.accuracy:.2f}")
 
     print("Metric Scores:")
@@ -1973,6 +1984,9 @@ def run_from_yaml(
                 print(f"  {failure}")
 
         exit_code = 0 if outcome.gate_passed else 1
+
+    if outcome.run_status == "failed":
+        exit_code = 1
 
     baseline_source: str | None = None
     baseline_provider: str | None = None
@@ -2133,6 +2147,10 @@ def run_from_yaml(
             "evaluation_name": (outcome.evaluation_name),
             "evaluation_id": (outcome.evaluation_id),
             "run_id": outcome.run_id,
+            "run_status": outcome.run_status,
+            "completed_cases_count": outcome.completed_cases_count,
+            "failed_cases_count": outcome.failed_cases_count,
+            "failed_cases": outcome.failed_cases,
             "dataset_version_id": (inputs.dataset_version_id),
             "prompt_version_id": (inputs.prompt_version_id),
             "metric_name": metric_names_text,
@@ -2179,9 +2197,9 @@ def run_from_yaml(
     )
 
     print()
-    print("Run created successfully")
+    print("Run execution completed")
     print(f"Run ID: {outcome.run_id}")
-    print("Run Status: created")
+    print(f"Run Status: {outcome.run_status}")
 
     print()
 

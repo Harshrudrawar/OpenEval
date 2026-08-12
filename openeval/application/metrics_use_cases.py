@@ -12,8 +12,13 @@ from openeval.domain.shared import ValidationError, generate_id
 class EvaluateCaseResultsUseCase:
     metric_plugins: MetricPlugin | list[MetricPlugin]
 
-    def _resolve_metric_plugins(self) -> list[MetricPlugin]:
-        if isinstance(self.metric_plugins, list):
+    def _resolve_metric_plugins(
+        self,
+    ) -> list[MetricPlugin]:
+        if isinstance(
+            self.metric_plugins,
+            list,
+        ):
             plugins = self.metric_plugins
         else:
             plugins = [self.metric_plugins]
@@ -29,18 +34,29 @@ class EvaluateCaseResultsUseCase:
         case_results: list[CaseResult],
     ) -> list[Score]:
         if len(cases) != len(case_results):
-            raise ValidationError("cases and case_results must have the same length")
+            raise ValidationError("cases and case_results must have " "the same length")
 
         scores: list[Score] = []
         plugins = self._resolve_metric_plugins()
 
+        successful_results = [
+            case_result
+            for case_result in case_results
+            if case_result.status == "completed"
+        ]
+
         for metric_plugin in plugins:
-            for case_result in case_results:
-                expected_output = case_result.metadata.get("expected_output", {})
+            for case_result in successful_results:
+                expected_output = case_result.metadata.get(
+                    "expected_output",
+                    {},
+                )
+
                 score_value = metric_plugin.evaluate(
                     expected_output=expected_output,
                     actual_output=case_result.actual_output,
                 )
+
                 scores.append(
                     Score(
                         id=generate_id(),

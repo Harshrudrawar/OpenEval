@@ -11,11 +11,29 @@ from openeval.domain.shared import generate_id
 class CreateRunUseCase:
     run_repository: RunRepository
 
-    def execute(self, evaluation_definition_id: str) -> Run:
+    def execute(
+        self,
+        evaluation_definition_id: str,
+    ) -> Run:
         run = Run(
             id=generate_id(),
             evaluation_definition_id=evaluation_definition_id,
             status="created",
         )
+
+        self.run_repository.save(run)
+        return run
+
+
+@dataclass
+class UpdateRunStatusUseCase:
+    run_repository: RunRepository
+
+    def execute(
+        self,
+        run: Run,
+        status: str,
+    ) -> Run:
+        run.status = status
         self.run_repository.save(run)
         return run
